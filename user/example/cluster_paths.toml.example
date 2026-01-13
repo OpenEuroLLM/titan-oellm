@@ -1,0 +1,91 @@
+# Cluster-specific path mappings for datasets, tokenizers, and base configurations
+#
+# SETUP INSTRUCTIONS:
+# 1. Copy this file to user/<your_username>/cluster_paths.toml
+# 2. Replace all <YOUR_*> placeholders with your actual paths
+# 3. Add/remove clusters and datasets as needed for your setup
+#
+# Structure:
+#   - ["cluster.{name}"]                          - Cache directories and output paths
+#   - ["tokenizer.{name}.{cluster}"]              - Tokenizer paths
+#   - ["dataset.{name}.{tokenizer}.{cluster}"]    - Dataset paths
+
+# ============================================================================
+# CLUSTER BASE CONFIGURATION
+# ============================================================================
+# Configure paths for each HPC cluster you use
+
+["cluster.juwels"]
+output_dir = "/p/scratch/<YOUR_PROJECT>/<YOUR_USER_ID>/experiments/slurm"
+cache_base = "/p/scratch/<YOUR_PROJECT>/<YOUR_USER_ID>/cache"
+hf_datasets_cache = "/p/project1/<YOUR_PROJECT>/<YOUR_USER_ID>/data/cache/"
+hf_home = "/p/project1/<YOUR_PROJECT>/<YOUR_USER_ID>/model/cache/"
+
+["cluster.jupiter"]
+output_dir = "/e/project1/<YOUR_PROJECT>/<YOUR_USER_ID>/experiments/slurm"
+cache_base = "/e/project1/<YOUR_PROJECT>/<YOUR_USER_ID>/cache"
+
+["cluster.capella"]
+output_dir = "/data/horse/ws/<YOUR_USER_ID>-workspace/experiments/slurm"
+cache_base = "/data/cat/ws/<YOUR_USER_ID>-titan/cache"
+data_dir = "/data/cat/ws/<YOUR_USER_ID>-titan/data"
+
+# ============================================================================
+# TOKENIZERS
+# ============================================================================
+# Add paths to your tokenizers for each cluster
+
+["tokenizer.neox.juwels"]
+path = "/p/project1/<YOUR_PROJECT>/<YOUR_USER_ID>/data/tokenizer/neox"
+
+["tokenizer.neox.jupiter"]
+path = "/e/project1/<YOUR_PROJECT>/<YOUR_USER_ID>/data/tokenizer/neox"
+
+["tokenizer.neox.capella"]
+path = "/data/cat/ws/<YOUR_USER_ID>-titan/data/tokenizer/neox"
+
+# Add more tokenizers as needed:
+# ["tokenizer.llama3.juwels"]
+# path = "/p/project1/<YOUR_PROJECT>/<YOUR_USER_ID>/data/tokenizer/llama3"
+
+# ============================================================================
+# DATASETS
+# ============================================================================
+# Add your datasets for each cluster
+
+# Example: SlimPajama dataset tokenized with neox
+["dataset.slimpajama_627b.neox.juwels"]
+train_prefix = "/p/scratch/<YOUR_PROJECT>/<YOUR_USER_ID>/data/datasets/SlimPajama-627B/train/merged"
+train_chunks = "/p/scratch/<YOUR_PROJECT>/<YOUR_USER_ID>/data/datasets/SlimPajama-627B/train/chunks"
+validation_prefix = "/p/scratch/<YOUR_PROJECT>/<YOUR_USER_ID>/data/datasets/SlimPajama-627B/validation/merged"
+dataloader = "ChunkedMMapDataset"
+min_doc_len = 128
+
+["dataset.slimpajama_627b.neox.jupiter"]
+train_prefix = "/e/project1/<YOUR_PROJECT>/<YOUR_USER_ID>/data/datasets/SlimPajama-627B/train/merged"
+train_chunks = "/e/project1/<YOUR_PROJECT>/<YOUR_USER_ID>/data/datasets/SlimPajama-627B/train/chunks"
+validation_prefix = "/e/project1/<YOUR_PROJECT>/<YOUR_USER_ID>/data/datasets/SlimPajama-627B/validation/merged"
+dataloader = "ChunkedMMapDataset"
+min_doc_len = 128
+
+["dataset.slimpajama_627b.neox.capella"]
+train_prefix = "/data/cat/ws/<YOUR_USER_ID>-titan/data/SlimPajama-627B/train/merged"
+train_chunks = "/data/cat/ws/<YOUR_USER_ID>-titan/data/SlimPajama-627B/train/chunks"
+validation_prefix = "/data/cat/ws/<YOUR_USER_ID>-titan/data/SlimPajama-627B/validation/merged"
+dataloader = "ChunkedMMapDataset"
+min_doc_len = 128
+
+# ============================================================================
+# BENCHMARKS
+# ============================================================================
+# Standard evaluation benchmarks (WikiText-2, WikiText-103, LAMBADA)
+# Use scripts/download_benchmarks.py to create them
+
+["benchmarks.neox.juwels"]
+path = "/p/project1/<YOUR_PROJECT>/<YOUR_USER_ID>/data/benchmarks/neox"
+
+["benchmarks.neox.jupiter"]
+path = "/e/project1/<YOUR_PROJECT>/<YOUR_USER_ID>/data/benchmarks/neox"
+
+["benchmarks.neox.capella"]
+path = "/data/cat/ws/<YOUR_USER_ID>-titan/data/benchmarks/neox"

@@ -205,3 +205,24 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# ==============================================================================
+# Titan-OELLM specific
+# ==============================================================================
+
+# User-specific configurations (must be customized per user)
+/user/*/cluster_paths.toml
+/user/*/local_default.toml
+/user/*/experimente/
+/user/*/outputs/
+
+# Keep example templates
+!/user/example/
+
+# Training outputs and experiment results
+/titan_oellm/outputs/
+*.sif
+
+# Slurm output files
+mpi-out.*
+mpi-err.*

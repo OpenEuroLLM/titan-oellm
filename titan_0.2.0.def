@@ -1,0 +1,81 @@
+# Container build for TorchTitan version 0.2.0 
+
+Bootstrap: docker
+From: nvcr.io/nvidia/pytorch:25.10-py3
+
+
+%arguments
+    PYTHON_VERSION=3.12.3
+
+%files
+    setup.py /opt/titan-oellm/
+    titan_oellm /opt/titan-oellm/
+    torchtitan /opt/titan-oellm/
+    torchtitan/.ci/docker/requirements.txt /opt/
+    torchtitan/.ci/docker/requirements-dev.txt /opt/
+    torchtitan/.ci/docker/requirements-flux.txt /opt/
+
+
+%environment
+    export USER=torchtitan
+    export HOME=/workspace
+    export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib/aarch64-linux-gnu:/opt/hpcx/nccl_rdma_sharp_plugin/lib:/opt/hpcx/nccl_rdma_sharp_plugin/lib
+
+
+%post
+
+    pip install --upgrade pip setuptools wheel cmake ninja
+
+    # Create lib -> lib.real symlink for Triton 3.4+ compatibility
+    # NVIDIA containers store CUDA compat libraries in lib.real/ but Triton expects lib/
+    # This is required for PyTorch 2.9+ with torch.compile
+    if [ -d /usr/local/cuda/compat/lib.real ] && [ ! -e /usr/local/cuda/compat/lib ]; then
+        ln -s lib.real /usr/local/cuda/compat/lib
+        echo "Created symlink: /usr/local/cuda/compat/lib -> lib.real"
+    fi
+
+    # Install PyTorch nightly 2.10.0.dev20251028 to get latest torch.compile fixes
+    # Using CUDA 13.0 index (cu130) to match container's CUDA 13.0
+    # Version 20251028 is the latest with both aarch64 (ARM) and x86_64 (AMD) support
+    echo "Installing PyTorch nightly 2.10.0.dev20251028+cu130 with CUDA 13.0..."
+    pip install --pre torch==2.10.0.dev20251028 torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu130
+
+    # Verify PyTorch version
+    python3 -c "import torch; print(f'PyTorch version: {torch.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}')"
+
+    pip install --no-cache-dir array-record pytest black flake8 mypy etcd3 python-etcd torchelastic
+
+    grep -v "^torch" /opt/requirements.txt > /tmp/requirements-filtered.txt || cp /opt/requirements.txt /tmp/requirements-filtered.txt
+    pip install --no-cache-dir -r /tmp/requirements-filtered.txt
+    pip install --no-cache-dir -r /opt/requirements-dev.txt
+    pip install --no-cache-dir -r /opt/requirements-flux.txt
+
+    cd /opt/titan-oellm/torchtitan
+    pip install -e .
+
+    cd /opt/titan-oellm
+    pip install -e .
+
+    mkdir -p /workspace
+    chmod 777 /workspace
+
+    mkdir -p /home/torchtitan
+    chmod 777 /home/torchtitan
+
+
+
+%labels
+    Author Joerg Franke
+    Version 0.2.0
+    Base nvcr.io/nvidia/pytorch:25.10-py3
+    PyTorch PyTorch nightly 2.9.x from https://download.pytorch.org/whl/nightly/cu130
+    Description Titan-OELLM container for TorchTitan 0.2.0 with PyTorch nightly (CUDA 13.0) for torch.compile fixes
+
+
+
+
+
+
+
+
+

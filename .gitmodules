@@ -1,0 +1,4 @@
+[submodule "torchtitan"]
+	path = torchtitan
+	url = https://github.com/pytorch/torchtitan.git
+	branch = v0.2.0
