@@ -226,6 +226,3 @@ __marimo__/
 # Slurm output files
 mpi-out.*
 mpi-err.*
-
-# Torchtitan
-torchtitan/
