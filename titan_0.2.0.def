@@ -38,8 +38,12 @@ From: nvcr.io/nvidia/pytorch:25.10-py3
     # Install PyTorch nightly 2.10.0.dev20251116 to get latest torch.compile fixes
     # Using CUDA 13.0 index (cu130) to match container's CUDA 13.0
     # Version 20251028 is the latest with both aarch64 (ARM) and x86_64 (AMD) support
+    # Installing torch only with --no-deps to avoid version/hash conflicts
     echo "Installing PyTorch nightly 2.10.0.dev20251116+cu130 with CUDA 13.0..."
-    pip install --no-cache-dir --pre torch==2.10.0.dev20251116 torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu130
+    pip install --no-cache-dir --no-deps --pre torch==2.10.0.dev20251116 --index-url https://download.pytorch.org/whl/nightly/cu130
+    
+    # Install torchvision and torchaudio separately without hash verification
+    pip install --no-cache-dir --pre torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu130
 
     # Verify PyTorch version
     python3 -c "import torch; print(f'PyTorch version: {torch.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}')"
