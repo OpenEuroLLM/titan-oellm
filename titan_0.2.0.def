@@ -88,7 +88,7 @@ From: nvcr.io/nvidia/pytorch:25.10-py3
     cd /
     rm -rf /tmp/flash-attention
 
-    cd /opt/titan-oellmd/torchtitan
+    cd /opt/titan-oellm/torchtitan
     pip install -e .
 
     cd /opt/titan-oellm
