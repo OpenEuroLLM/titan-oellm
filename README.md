@@ -18,7 +18,8 @@ A TorchTitan-based framework for training large language models on HPC systems.
 git clone --recursive <repo-url>
 cd titan-oellm
 
-# Verify TorchTitan submodule
+# Load and verify TorchTitan submodule
+git submodule update --init --recursive
 cd torchtitan && git describe --tags && cd ..
 # Should output: v0.2.0
 ```
@@ -46,6 +47,7 @@ vim user/$TITAN_USER/cluster_paths.toml
 export APPTAINER_CACHEDIR=/path/to/your/cache
 export APPTAINER_TMPDIR=$SCRATCH/apptainer_tmp
 apptainer build --fakeroot titan_CLUSTER_0.2.0.sif titan_0.2.0.def
+
 ```
 
 Test container:
