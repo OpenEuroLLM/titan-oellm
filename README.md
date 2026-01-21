@@ -24,7 +24,23 @@ cd torchtitan && git describe --tags && cd ..
 # Should output: v0.2.0
 ```
 
-### 2. Set Up User Configuration
+### 2. Build Container
+
+```bash
+export APPTAINER_CACHEDIR=/path/to/your/cache
+export APPTAINER_TMPDIR=$SCRATCH/apptainer_tmp
+apptainer build --fakeroot titan_CLUSTER_0.2.0.sif titan_0.2.0.def
+
+```
+
+Test container:
+```bash
+apptainer shell --nv titan_CLUSTER_0.2.0.sif
+python -c "import torch; print(torch.__version__); print(torch.cuda.is_available())"
+```
+
+
+### 3. Set Up User Configuration
 
 ```bash
 # Set your username (REQUIRED for all operations)
@@ -41,20 +57,6 @@ cp user/example/cluster_paths.toml.example user/$TITAN_USER/cluster_paths.toml
 vim user/$TITAN_USER/cluster_paths.toml
 ```
 
-### 3. Build Container
-
-```bash
-export APPTAINER_CACHEDIR=/path/to/your/cache
-export APPTAINER_TMPDIR=$SCRATCH/apptainer_tmp
-apptainer build --fakeroot titan_CLUSTER_0.2.0.sif titan_0.2.0.def
-
-```
-
-Test container:
-```bash
-apptainer shell --nv titan_CLUSTER_0.2.0.sif
-python -c "import torch; print(torch.__version__); print(torch.cuda.is_available())"
-```
 
 ### 4. Run Training
 
