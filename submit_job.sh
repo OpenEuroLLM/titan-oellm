@@ -107,23 +107,44 @@ if [[ "$LOCAL_MODE" == true ]]; then
     
     # Create directories
     mkdir -p "$TRITON_CACHE_DIR" "$HF_DATASETS_CACHE" "$TORCH_HOME" "$OUTPUT_DIR"
-    
+
+    # Load CUDA modules for JUWELS (required for --nv flag to work properly)
+    if [[ "$CLUSTER" == "juwels" ]]; then
+        echo "Loading JUWELS CUDA modules..."
+        ml Stages/2025
+        ml GCC/13.3.0
+        ml Python/3.12.3
+        ml CUDA/12
+        ml cuDNN/9.5.0.50-CUDA-12
+        ml NCCL/default-CUDA-12
+        ml NVHPC/25.5-CUDA-12
+    fi
+
     # Build command
     CMD=(
         apptainer exec --nv
-        --bind /tmp/cuda-compat:/usr/local/cuda/compat
-        --bind /tmp/cuda-lib64:/usr/local/cuda/lib64
         --bind "$TRITON_CACHE_DIR:$TRITON_CACHE_DIR"
         --bind "$SCRIPT_DIR:/opt/titan-oellm"
         --bind "$HF_DATASETS_CACHE:$HF_DATASETS_CACHE"
         --bind "$TORCH_HOME:$TORCH_HOME"
         --bind "$HOME:$HOME"
-        --env LD_PRELOAD=/usr/local/cuda/compat/lib/libcuda.so.1
-        --env LIBRARY_PATH=/usr/local/cuda/compat/lib:/usr/local/cuda/lib64
         --env TITAN_USER="$TITAN_USER"
         --env OUTPUT_DIR="$OUTPUT_DIR"
         --env TORCH_HOME="$TORCH_HOME"
         --pwd /opt/titan-oellm
+    )
+
+    # Local machine needs cuda-compat workaround
+    if [[ "$CLUSTER" == "local" ]]; then
+        CMD+=(
+            --bind /tmp/cuda-compat:/usr/local/cuda/compat
+            --bind /tmp/cuda-lib64:/usr/local/cuda/lib64
+            --env LD_PRELOAD=/usr/local/cuda/compat/lib/libcuda.so.1
+            --env LIBRARY_PATH=/usr/local/cuda/compat/lib:/usr/local/cuda/lib64
+        )
+    fi
+
+    CMD+=(
         "$CONTAINER"
         torchrun --nproc_per_node="$NPROC" --nnodes=1 --node_rank=0
                  --master_addr=localhost --master_port=29500
