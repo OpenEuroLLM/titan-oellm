@@ -1,14 +1,24 @@
 # Titan-OELLM
 
 A TorchTitan-based framework for training large language models on HPC systems.
+Focus on research and deveoplent of new architectures and optimization methods. 
 
 ## Features
 
-- **Custom Model Architectures**: GPT-Plus (with QKNormPlus) and Qwen3-Custom
-- **HPC Optimization**: SLURM scripts for JUWELS, Jupiter, and Capella clusters
+- **Custom Model Architectures**: Easily modiufy architecturers based on default implementations such as Qwen3
+- **HPC Optimization**: SLURM scripts for different clusters
 - **Flexible Configuration**: TOML-based configs with cluster-specific path resolution
 - **Validation During Training**: Comprehensive validation with TensorBoard integration
 - **Memory-Mapped Datasets**: Efficient data loading with chunking support
+
+
+
+## Core Structure
+
+- We use `torchtitan` as ist is.
+- We build global custom components in `titan_oellm`
+- We maintain private paths and configs in `user/***`
+
 
 ## Quick Start
 
@@ -28,7 +38,7 @@ cd torchtitan && git describe --tags && cd ..
 
 ```bash
 export APPTAINER_CACHEDIR=/path/to/your/cache
-export APPTAINER_TMPDIR=$SCRATCH/apptainer_tmp
+export APPTAINER_TMPDIR=/path/to/your/tmp
 apptainer build --fakeroot titan_CLUSTER_0.2.0.sif titan_0.2.0.def
 
 ```
@@ -40,7 +50,7 @@ python -c "import torch; print(torch.__version__); print(torch.cuda.is_available
 ```
 
 
-### 3. Set Up User Configuration
+### 3. Set Up Your User Configuration
 
 ```bash
 # Set your username (REQUIRED for all operations)
