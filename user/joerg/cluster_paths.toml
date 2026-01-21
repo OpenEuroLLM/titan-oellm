@@ -15,6 +15,12 @@
 # ============================================================================
 # Configure paths for each HPC cluster you use
 
+["cluster.local"]
+output_dir = "/home/joerg/workspace/python/github/titan-oellm/experiments/local_test"
+cache_base = "/home/joerg/workspace/data/cache"
+hf_datasets_cache = "/home/joerg/workspace/data/cache/hf"
+hf_home = "/home/joerg/workspace/data/huggingface/cache"
+
 ["cluster.juwels"]
 output_dir = "/p/project1/projectnucleus/franke5/experiments/titan-oellm"
 cache_base = "/p/scratch/projectnucleus/franke5/cache"
@@ -32,6 +38,12 @@ hf_home = "/p/project1/transfernetx/franke5/model/cache"
 # ============================================================================
 # Add paths to your tokenizers for each cluster
 
+["tokenizer.neox.local"]
+path = "/home/joerg/workspace/data/huggingface/tokenizer/neox"
+
+["tokenizer.nemotron.local"]
+path = "/home/joerg/workspace/data/huggingface/tokenizer/nemotron"
+
 ["tokenizer.neox.juwels"]
 path = "/p/project1/transfernetx/franke5/data/tokenizer/neox"
 
@@ -46,6 +58,13 @@ path = "/p/project1/transfernetx/franke5/data/tokenizer/nemotron"
 # DATASETS
 # ============================================================================
 # Add your datasets for each cluster
+
+# Local datasets for testing
+["dataset.test_dataset.neox.local"]
+data_prefix = "/home/joerg/workspace/data/huggingface/openwebtext/tokenized_neox/merged_text_document"
+chunks_dir = "/home/joerg/workspace/data/huggingface/openwebtext/tokenized_neox/merged_text_document_chunks"
+dataloader = "MMapDataset"
+min_doc_len = 128
 
 # Example: SlimPajama dataset tokenized with neox
 ["dataset.slimpajama_627b.neox.juwels"]
@@ -72,10 +91,13 @@ min_doc_len = 128
 
 
 # ============================================================================
-# BENCHMARKS
+# BENCHMARKS (Optional - only needed for evaluation)
 # ============================================================================
 # Standard evaluation benchmarks (WikiText-2, WikiText-103, LAMBADA)
 # Use scripts/download_benchmarks.py to create them
+
+# ["benchmarks.neox.local"]
+# path = "/home/joerg/workspace/data/benchmarks/neox"
 
 ["benchmarks.neox.juwels"]
 path = "/p/project1/transfernetx/franke5/data/benchmarks/neox"

@@ -1,227 +1,172 @@
 #!/bin/bash
-#
-# SLURM Job Submission Wrapper
-#
-# This script wraps sbatch to dynamically set output/error log paths
-# from cluster_paths.toml configuration instead of hardcoded paths.
-#
-# Usage:
-#   bash submit_job.sh [sbatch-options] [slurm-script] [script-args...]
-#
-# Examples:
-#   TITAN_USER=joerg CLUSTER=juwels bash submit_job.sh
-#   TITAN_USER=joerg bash submit_job.sh slurm/juwels.sh
-#   TITAN_USER=joerg CLUSTER=juwels bash submit_job.sh --nodes=4 --model.flavor=1B
-#
-# Options:
-#   --help      Show this help message
-#   --dry-run   Print the sbatch command without executing
-#
-# Environment variables:
-#   TITAN_USER  - Username for user-specific configs (REQUIRED)
-#   CLUSTER     - Override cluster detection (default: auto-detect from script name)
-#
+# SLURM Job Submission Wrapper / Local Training Runner
+set -euo pipefail
 
-set -e
-
-# Script directory (for finding container and project files)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ============================================================================
-# HELP AND OPTIONS
+# FUNCTIONS
 # ============================================================================
+
+die() { echo "Error: $*" >&2; exit 1; }
 
 show_help() {
     cat << 'EOF'
-SLURM Job Submission Wrapper
-
 Usage:
-  bash submit_job.sh [sbatch-options] [slurm-script] [script-args...]
-
-Examples:
-  TITAN_USER=joerg CLUSTER=juwels bash submit_job.sh
-  TITAN_USER=joerg bash submit_job.sh slurm/juwels.sh
-  TITAN_USER=joerg CLUSTER=juwels bash submit_job.sh --nodes=4 --model.flavor=1B
+  bash submit_job.sh [options] [slurm-script] [training-args...]
+  bash submit_job.sh --local [training-args...]
 
 Options:
-  --help      Show this help message
-  --dry-run   Print the sbatch command without executing
+  --help, -h   Show this help
+  --dry-run    Print command without executing
+  --local      Run locally without SLURM
 
-Environment variables:
-  TITAN_USER  - Username for user-specific configs (REQUIRED)
-  CLUSTER     - Cluster name (auto-selects slurm/<CLUSTER>.sh if no script provided)
+Environment:
+  TITAN_USER   Username for configs (REQUIRED)
+  CLUSTER      Cluster name (default: auto-detect or 'local')
+  DATASET      Dataset name (default: test_dataset)
+  TOKENIZER    Tokenizer name (default: neox)
+  CONFIG       Config file path for --local mode
+  NPROC        Number of GPUs for local (default: 1)
 
-The wrapper automatically:
-  1. Auto-selects slurm script from CLUSTER env var, or detects cluster from script name
-  2. Loads output_dir from your user/$TITAN_USER/cluster_paths.toml
-  3. Creates output directory if needed
-  4. Passes --output and --error to sbatch to override hardcoded paths
-
+Examples:
+  TITAN_USER=joerg CLUSTER=juwels bash submit_job.sh --nodes=4
+  TITAN_USER=joerg bash submit_job.sh --local --model.flavor=debugmodel
 EOF
 }
 
-# Check for --help or --dry-run
+find_container() {
+    local container
+    container=$(find "$SCRIPT_DIR" -maxdepth 1 -name "titan_*.sif" -type f | head -n1)
+    [[ -n "$container" ]] || die "No container (titan_*.sif) found in $SCRIPT_DIR"
+    echo "$container"
+}
+
+run_python() {
+    local container=$1 code=$2
+    apptainer exec --env TITAN_USER="$TITAN_USER" --bind "$SCRIPT_DIR":/opt/titan-oellm \
+        "$container" python3 -c "
+import sys; sys.path.insert(0, '/opt/titan-oellm')
+$code"
+}
+
+detect_cluster_from_script() {
+    case "$1" in
+        *juwels*)  echo "juwels" ;;
+        *capella*) echo "capella" ;;
+        *jupiter*) echo "jupiter" ;;
+        *) die "Cannot detect cluster from: $1. Set CLUSTER explicitly." ;;
+    esac
+}
+
+# ============================================================================
+# PARSE ARGUMENTS
+# ============================================================================
+
 DRY_RUN=false
+LOCAL_MODE=false
+ARGS=()
+
 for arg in "$@"; do
     case "$arg" in
-        --help|-h)
-            show_help
-            exit 0
-            ;;
-        --dry-run)
-            DRY_RUN=true
-            ;;
+        --help|-h) show_help; exit 0 ;;
+        --dry-run) DRY_RUN=true ;;
+        --local)   LOCAL_MODE=true ;;
+        *)         ARGS+=("$arg") ;;
     esac
 done
 
-# Remove --dry-run from args for sbatch
-ARGS=()
-for arg in "$@"; do
-    if [ "$arg" != "--dry-run" ]; then
-        ARGS+=("$arg")
-    fi
-done
+[[ -n "${TITAN_USER:-}" ]] || die "TITAN_USER not set. Run: export TITAN_USER=your_username"
 
 # ============================================================================
-# VALIDATION
+# LOCAL EXECUTION MODE
 # ============================================================================
 
-if [ -z "$TITAN_USER" ]; then
-    echo "Error: TITAN_USER environment variable not set." >&2
-    echo "Set it before running: export TITAN_USER=your_username" >&2
-    echo "See user/example/ for configuration templates." >&2
-    exit 1
+if [[ "$LOCAL_MODE" == true ]]; then
+    CLUSTER="${CLUSTER:-local}"
+    DATASET="${DATASET:-test_dataset}"
+    TOKENIZER="${TOKENIZER:-neox}"
+    NPROC="${NPROC:-1}"
+    CONTAINER=$(find_container)
+    
+    # Determine config file
+    CONFIG_ARG=""
+    for arg in "${ARGS[@]}"; do
+        [[ "$arg" == --job.config_file=* ]] && CONFIG_ARG="$arg" && break
+    done
+    [[ -z "$CONFIG_ARG" ]] && CONFIG_ARG="--job.config_file=/opt/titan-oellm/${CONFIG:-user/$TITAN_USER/configs/local_default.toml}"
+    
+    echo "=== Local Training: cluster=$CLUSTER dataset=$DATASET tokenizer=$TOKENIZER gpus=$NPROC ==="
+    
+    # Load environment from cluster config
+    eval "$(run_python "$CONTAINER" "from titan_oellm.cluster_config import get_env_exports; print(get_env_exports('$CLUSTER'))")"
+    [[ -n "${TRITON_CACHE_DIR:-}" ]] || die "Failed to load cluster config for '$CLUSTER'"
+    
+    # Get dataset/tokenizer CLI args
+    CLUSTER_ARGS=$(run_python "$CONTAINER" "from titan_oellm.cluster_config import get_dataset_args; print(get_dataset_args('$DATASET', '$TOKENIZER', '$CLUSTER'))")
+    
+    # Create directories
+    mkdir -p "$TRITON_CACHE_DIR" "$HF_DATASETS_CACHE" "$TORCH_HOME" "$OUTPUT_DIR"
+    
+    # Build command
+    CMD=(
+        apptainer exec --nv
+        --bind /tmp/cuda-compat:/usr/local/cuda/compat
+        --bind /tmp/cuda-lib64:/usr/local/cuda/lib64
+        --bind "$TRITON_CACHE_DIR:$TRITON_CACHE_DIR"
+        --bind "$SCRIPT_DIR:/opt/titan-oellm"
+        --bind "$HF_DATASETS_CACHE:$HF_DATASETS_CACHE"
+        --bind "$TORCH_HOME:$TORCH_HOME"
+        --bind "$HOME:$HOME"
+        --env LD_PRELOAD=/usr/local/cuda/compat/lib/libcuda.so.1
+        --env LIBRARY_PATH=/usr/local/cuda/compat/lib:/usr/local/cuda/lib64
+        --env TITAN_USER="$TITAN_USER"
+        --env OUTPUT_DIR="$OUTPUT_DIR"
+        --env TORCH_HOME="$TORCH_HOME"
+        --pwd /opt/titan-oellm
+        "$CONTAINER"
+        torchrun --nproc_per_node="$NPROC" --nnodes=1 --node_rank=0
+                 --master_addr=localhost --master_port=29500
+        -m torchtitan.train "$CONFIG_ARG" $CLUSTER_ARGS "${ARGS[@]}"
+    )
+    
+    echo "Command: ${CMD[*]}"
+    [[ "$DRY_RUN" == true ]] && { echo "[DRY-RUN]"; exit 0; }
+    exec "${CMD[@]}"
 fi
 
-# Find the slurm script in args (first .sh file)
+# ============================================================================
+# SLURM SUBMISSION MODE
+# ============================================================================
+
+# Find slurm script in args or auto-select
 SLURM_SCRIPT=""
 for arg in "${ARGS[@]}"; do
-    if [[ "$arg" == *.sh ]]; then
-        SLURM_SCRIPT="$arg"
-        break
-    fi
+    [[ "$arg" == *.sh ]] && SLURM_SCRIPT="$arg" && break
 done
 
-if [ -z "$SLURM_SCRIPT" ]; then
-    # Try to auto-select based on CLUSTER env var
-    if [ -n "$CLUSTER" ]; then
-        SLURM_SCRIPT="slurm/${CLUSTER}.sh"
-        if [ ! -f "$SCRIPT_DIR/$SLURM_SCRIPT" ]; then
-            echo "Error: Auto-selected script not found: $SLURM_SCRIPT" >&2
-            exit 1
-        fi
-        echo "Auto-selected script: $SLURM_SCRIPT"
-        ARGS+=("$SLURM_SCRIPT")
-    else
-        echo "Error: No SLURM script provided and CLUSTER not set." >&2
-        echo "Usage: CLUSTER=juwels bash submit_job.sh" >&2
-        echo "   or: bash submit_job.sh slurm/juwels.sh" >&2
-        exit 1
-    fi
+if [[ -z "$SLURM_SCRIPT" ]]; then
+    [[ -n "${CLUSTER:-}" ]] || die "No SLURM script provided and CLUSTER not set"
+    SLURM_SCRIPT="slurm/${CLUSTER}.sh"
+    [[ -f "$SCRIPT_DIR/$SLURM_SCRIPT" ]] || die "Auto-selected script not found: $SLURM_SCRIPT"
+    ARGS+=("$SLURM_SCRIPT")
 fi
 
-# ============================================================================
-# CLUSTER DETECTION
-# ============================================================================
+# Detect cluster from script name if not set
+[[ -z "${CLUSTER:-}" ]] && CLUSTER=$(detect_cluster_from_script "$SLURM_SCRIPT")
 
-# Auto-detect cluster from script name if CLUSTER not set
-if [ -z "$CLUSTER" ]; then
-    case "$SLURM_SCRIPT" in
-        *juwels*)
-            CLUSTER="juwels"
-            ;;
-        *capella*)
-            CLUSTER="capella"
-            ;;
-        *jupiter*)
-            CLUSTER="jupiter"
-            ;;
-        *)
-            echo "Error: Cannot auto-detect cluster from script name: $SLURM_SCRIPT" >&2
-            echo "Set CLUSTER environment variable explicitly." >&2
-            exit 1
-            ;;
-    esac
-fi
+CONTAINER=$(find_container)
 
-echo "Detected cluster: $CLUSTER"
+# Get output directory from config
+OUTPUT_DIR=$(run_python "$CONTAINER" "from titan_oellm.cluster_config import get_submit_config; print(get_submit_config('$CLUSTER')['output_dir'])")
+[[ -n "$OUTPUT_DIR" ]] || die "Failed to get output_dir for cluster '$CLUSTER'"
 
-# ============================================================================
-# FIND CONTAINER
-# ============================================================================
-
-# Find the container file (pattern: titan_*.sif)
-CONTAINER=$(find "$SCRIPT_DIR" -maxdepth 1 -name "titan_*.sif" -type f | head -n1)
-
-if [ -z "$CONTAINER" ]; then
-    echo "Error: No container file (titan_*.sif) found in $SCRIPT_DIR" >&2
-    exit 1
-fi
-
-echo "Using container: $(basename "$CONTAINER")"
-
-# ============================================================================
-# LOAD OUTPUT DIRECTORY FROM CLUSTER CONFIG
-# ============================================================================
-
-echo "Loading output directory from cluster config..."
-
-# Run inside container to access cluster_config module
-OUTPUT_DIR=$(apptainer exec \
-    --env TITAN_USER="$TITAN_USER" \
-    --bind "$SCRIPT_DIR":/opt/titan-oellm \
-    "$CONTAINER" \
-    python3 -c "
-import sys
-sys.path.insert(0, '/opt/titan-oellm')
-from titan_oellm.cluster_config import get_submit_config
-try:
-    config = get_submit_config('$CLUSTER')
-    print(config['output_dir'])
-except Exception as e:
-    print(f'Error: {e}', file=sys.stderr)
-    sys.exit(1)
-")
-
-if [ -z "$OUTPUT_DIR" ]; then
-    echo "Error: Failed to get output_dir from cluster config" >&2
-    echo "Please ensure user/$TITAN_USER/cluster_paths.toml has [cluster.$CLUSTER] section" >&2
-    exit 1
-fi
-
-echo "Output directory: $OUTPUT_DIR"
-
-# Export for downstream jobs (passed through sbatch environment)
 export OUTPUT_DIR
+echo "Cluster: $CLUSTER | Output: $OUTPUT_DIR | Container: $(basename "$CONTAINER")"
 
-# ============================================================================
-# CREATE OUTPUT DIRECTORY
-# ============================================================================
+[[ "$DRY_RUN" == false ]] && mkdir -p "$OUTPUT_DIR/slurm"
 
-if [ "$DRY_RUN" = false ]; then
-    mkdir -p "$OUTPUT_DIR"
-    mkdir -p "$OUTPUT_DIR/slurm"
-    echo "Created output directory (if not exists)"
-fi
-
-# ============================================================================
-# BUILD AND EXECUTE SBATCH COMMAND
-# ============================================================================
-
-# Build the sbatch command with dynamic output/error paths
-SBATCH_CMD=(
-    sbatch
-    --output="$OUTPUT_DIR/slurm/mpi-out.%j"
-    --error="$OUTPUT_DIR/slurm/mpi-err.%j"
-    "${ARGS[@]}"
-)
-
-echo ""
-echo "Command: ${SBATCH_CMD[*]}"
-echo ""
-
-if [ "$DRY_RUN" = true ]; then
-    echo "[DRY-RUN] Would execute the above command"
-else
-    exec "${SBATCH_CMD[@]}"
-fi
+CMD=(sbatch --output="$OUTPUT_DIR/slurm/mpi-out.%j" --error="$OUTPUT_DIR/slurm/mpi-err.%j" "${ARGS[@]}")
+echo "Command: ${CMD[*]}"
+[[ "$DRY_RUN" == true ]] && { echo "[DRY-RUN]"; exit 0; }
+exec "${CMD[@]}"
