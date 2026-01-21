@@ -40,17 +40,17 @@ __all__ = [
 # Reference: https://huggingface.co/collections/Qwen/qwen3-6751c5cbf6fc98b0838a3d2f
 qwen3_custom_configs = {
     "debugmodel": Qwen3CustomModelArgs(
-        dim=512,
-        n_layers=8,
-        n_heads=8,
+        dim=256,
+        n_layers=4,
+        n_heads=4,
         n_kv_heads=4,
         vocab_size=151936,
         head_dim=64,
-        hidden_dim=1536,
+        hidden_dim=1024,
         norm_eps=1e-6,
         rope_theta=1000000,
         qk_norm=True,
-        max_seq_len=4096,
+        max_seq_len=2048,
         depth_init=True,
     ),
     "0.5B": Qwen3CustomModelArgs(
@@ -160,7 +160,7 @@ def get_train_spec() -> TrainSpec:
 
     This integrates the Qwen3 model with titan-sci infrastructure:
     - sci_dataloader for data loading
-    - Universal LR scheduler (supports WSD, cosine, OU, universal_ou, etc.)
+    - Universal LR scheduler (3-phase: warm, main, cooldown)
     - sci_validator for validation
     - Parameter logging with TensorBoard
     - HuggingFace checkpoint loading via state_dict_adapter

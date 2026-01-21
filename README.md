@@ -70,15 +70,28 @@ vim user/$TITAN_USER/cluster_paths.toml
 
 ### 4. Run Training
 
+#### Local Testing (Recommended for Development)
+
 ```bash
-# Set your user and cluster (REQUIRED)
-export TITAN_USER=your_username
-export CLUSTER=juwels  # or capella
+export TITAN_USER=example
 
-# Submit training job (auto-selects slurm/juwels.sh)
-bash submit_job.sh
+# Run locally (on your machine or interactive node)
+bash submit_job.sh --local
 
-# Or with custom dataset/config
+# With custom dataset and config
+DATASET=test_dataset TOKENIZER=neox CONFIG=user/example/configs/debug.toml bash submit_job.sh --local
+
+# On cluster interactive node (after srun --pty bash)
+CLUSTER=juwels DATASET=slimpajama_627b TOKENIZER=neox CONFIG=user/example/configs/debug.toml bash submit_job.sh --local
+```
+
+#### Cluster Submission (SLURM)
+
+```bash
+export TITAN_USER=example
+export CLUSTER=juwels  # or capella, jupiter
+
+# Submit training job (auto-selects slurm/<CLUSTER>.sh)
 DATASET=fineweb_edu CONFIG=qwen3_custom.toml bash submit_job.sh
 
 # Explicit script path also works
@@ -96,13 +109,14 @@ bash submit_job.sh slurm/juwels.sh
 
 ### Environment Variables
 
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `TITAN_USER` | Your username for user-specific configs | Yes |
-| `DATASET` | Dataset name from cluster_paths.toml | No (default: slimpajama_627b) |
-| `TOKENIZER` | Tokenizer name from cluster_paths.toml | No (default: neox) |
-| `CONFIG` | Base config file | No (default: base_plus.toml) |
-| `CLUSTER` | Cluster name (auto-selects `slurm/<CLUSTER>.sh`) | Yes (or provide script path) |
+| Variable | Description | Default | Required |
+|----------|-------------|---------|----------|
+| `TITAN_USER` | Username for user-specific configs | - | Yes |
+| `CLUSTER` | Cluster name (local, juwels, capella, jupiter) | local (for --local), auto-detect (for SLURM) | No |
+| `DATASET` | Dataset name from cluster_paths.toml | test_dataset (local), slimpajama_627b (SLURM) | No |
+| `TOKENIZER` | Tokenizer name from cluster_paths.toml | neox | No |
+| `CONFIG` | Config file path | user/$TITAN_USER/configs/debug.toml (local) | No |
+| `NPROC` | Number of GPUs for local execution | 1 | No |
 
 ### Directory Structure
 
@@ -128,6 +142,23 @@ titan-oellm/
 Each user needs their own `user/<username>/cluster_paths.toml` with:
 
 - **Cluster paths**: Output directories, cache locations
+- **Tokenizer paths**: Per-tokenizer, per-cluster configurations  
+- **Dataset paths**: Per-dataset, per-tokenizer, per-cluster configurations
+- **Benchmark paths**: Optional evaluation benchmark locations
+
+Copy template from `user/example/` and customize for your environment:
+
+```bash
+cp user/example/cluster_paths.toml.example user/myname/cluster_paths.toml
+cp user/example/config.toml.example user/myname/configs/debug.toml
+# Edit both files with your paths
+```
+
+Then run training:
+
+```bash
+TITAN_USER=myname CONFIG=user/myname/configs/debug.toml bash submit_job.sh --local
+```
 - **Tokenizers**: Paths to tokenizer files for each cluster
 - **Datasets**: Paths to training/validation data
 - **Benchmarks**: Paths to evaluation datasets (WikiText, LAMBADA)

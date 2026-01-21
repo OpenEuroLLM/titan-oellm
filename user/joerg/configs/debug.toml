@@ -13,8 +13,8 @@ tokenizer_path = "/home/joerg/workspace/data/huggingface/tokenizer/neox"
 # Qwen3-specific parameters
 qk_norm = true  # Enable QK normalization in attention
 rope_theta = 1000000  # RoPE theta value for rotary embeddings
-head_dim = 128  # Dimension per attention head
-hidden_dim = 3072  # FFN hidden dimension
+head_dim = 64  # Dimension per attention head
+hidden_dim = 1024  # FFN hidden dimension
 norm_eps = 1e-6  # Layer normalization epsilon
 depth_init = true  # Use depth-dependent initialization
 enable_weight_tying = false  # Tie embedding and output head weights (reduces params)
@@ -52,22 +52,20 @@ weight_decay = 0.0
 
 
 [lr_scheduler]
-# Scheduler type selection
-scheduler_type = "universal_ou"  # Universal scheduler that can emulate all others
-lr_min_absolute = 1e-5      # Absolute minimum learning rate
-# Phase 1 - Warm phase (warmup or warmdown)
-warm_steps = 0              # Absolute warm steps (mutually exclusive with warm_ratio, both can be 0)
-warm_ratio = 0.0            # Warm steps as ratio of total (mutually exclusive with warm_steps, both can be 0)
-warm_direction = "up"       # Direction: "up" (warmup) or "down" (warmdown)
-warm_type = "linear"        # Decay curve: "linear", "cosine", "exp", "sqrt"
-warm_start_ratio = 2.0      # Starting LR multiplier for warmdown (only used when warm_direction="down")
-# Phase 2 - Main phase (with optional OU process)
-main_decay_type = "const"   # Base schedule decay: "const", "linear", "cosine", "exp", "sqrt"
-main_decay_ratio = 0.2      # Target LR ratio at end of main phase (e.g., 0.2 = 20% of base_lr)
-# Phase 3 - Cooldown phase
-cooldown_steps = 0          # Absolute cooldown steps (mutually exclusive with cooldown_ratio, both can be 0)
-cooldown_ratio = 0.2        # Cooldown steps as ratio of total (20% of total training steps)
-cooldown_type = "cosine"    # Decay curve: "linear", "cosine", "exp", "sqrt"
+scheduler_type = "universal"
+lr_min_absolute = 1e-5  # Absolute minimum learning rate
+# Phase 1: Warm (warmup or warmdown)
+warm_steps = 0
+warm_ratio = 0.0  # Or use ratio: warm_steps as % of total
+warm_direction = "up"
+warm_type = "linear"
+# Phase 2: Main phase
+main_decay_type = "cosine"
+main_decay_ratio = 0.1
+# Phase 3: Cooldown
+cooldown_steps = 0
+cooldown_ratio = 0.0  # Or use steps: cooldown_steps
+cooldown_type = "cosine"
 
 
 [parallelism]

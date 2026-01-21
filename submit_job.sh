@@ -87,14 +87,11 @@ if [[ "$LOCAL_MODE" == true ]]; then
     DATASET="${DATASET:-test_dataset}"
     TOKENIZER="${TOKENIZER:-neox}"
     NPROC="${NPROC:-1}"
+    CONFIG="${CONFIG:-user/$TITAN_USER/configs/debug.toml}"
     CONTAINER=$(find_container)
     
-    # Determine config file
-    CONFIG_ARG=""
-    for arg in "${ARGS[@]}"; do
-        [[ "$arg" == --job.config_file=* ]] && CONFIG_ARG="$arg" && break
-    done
-    [[ -z "$CONFIG_ARG" ]] && CONFIG_ARG="--job.config_file=/opt/titan-oellm/${CONFIG:-user/$TITAN_USER/configs/local_default.toml}"
+    # Format config file path for container
+    CONFIG_ARG="--job.config_file=/opt/titan-oellm/$CONFIG"
     
     echo "=== Local Training: cluster=$CLUSTER dataset=$DATASET tokenizer=$TOKENIZER gpus=$NPROC ==="
     
