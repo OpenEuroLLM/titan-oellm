@@ -3,9 +3,7 @@
 # Use with: python train.py --job.config_file=configs/base_plus.toml <cluster-specific-args>
 
 [job]
-dump_folder = "./outputs/torchtitan"
-description = "TorchTitan training for gpt_plus model"
-custom_config_module = "titan_oellm.configs.sci_job_config"
+experiment_folder = "torchtitan"
 
 [model]
 name = "gpt_plus"
@@ -56,7 +54,7 @@ beta2 = 0.95
 
 [lr_scheduler]
 # Scheduler type selection
-scheduler_type = "cosine"  # Options: "wsd", "wdd", "cosine"
+scheduler_type = "cosine"  # Options: "wsd", "wdd", "cosine", "ou", "doud"
 
 # Universal phase parameters (used by all schedulers)
 warmup_steps = 1000        # Absolute warmup steps
@@ -67,7 +65,17 @@ lr_min_absolute = 1e-5     # Absolute minimum learning rate
 # WDD-specific parameters (only used when scheduler_type = "wdd")
 stable_decay_ratio = 0.0   # Linear decay during stable phase (0.0 = no decay)
 
+# OU-specific stochastic parameters (only used when scheduler_type = "ou" or "doud")
+ou_decay_type = "const"    # Phase 2 decay curve: "const", "linear", or "cosine" (OU applies multiplicatively on top)
+ou_min_ratio = 0.2         # Target LR ratio for Phase 2 decay (e.g., 0.2 = decay to 20% of base_lr)
+ou_theta = 0.008           # Mean reversion rate (lower = smoother)
+ou_sigma = 0.1             # Noise amplitude for OU factor around 1.0 (0.1 = ±10% fluctuations)
+ou_max_change = 0.05       # Max change in OU factor per step (0.05 = ±5% max change)
+ema_alpha = 0.99           # EMA smoothing factor (0.99 = strong smoothing)
+ou_seed = 1                # Seed for OU stochastic process (1 = deterministic, change for different random walks)
+
 # Warmdown parameters (used by "ou" and "doud" schedulers)
+# Note: OU with warmdown replaces DOUD - use scheduler_type="ou" with warmdown_steps > 0
 warmdown_steps = 0         # Warmdown phase steps (0 = use warmup instead, >0 = use warmdown)
 warmdown_ratio = 2.0       # Starting LR multiplier (2.0 = start at 2x base LR)
 warmdown_decay_type = "sqrt"  # Warmdown decay curve: "linear", "cosine", "sqrt", "exp"
@@ -111,7 +119,7 @@ early_stop = false
 # Memory budget for mode="memory_budget": 0.0 = max memory savings, 1.0 = max speed
 memory_budget = 0.5
 
-# Visualize memory/speed tradeoff pareto curve (generates SVG in dump_folder/memory_budget_pareto/)
+# Visualize memory/speed tradeoff pareto curve (generates SVG in $OUTPUT_DIR/<experiment_folder>/memory_budget_pareto/)
 visualize_memory_budget_pareto = false
 
 [quantize.linear.float8]
@@ -156,4 +164,4 @@ default_add_bos = true
 default_add_eos = false
 
 [experimental]
-custom_import = "titan_oellm.models"
+custom_import = "titan_sci.models"

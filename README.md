@@ -71,14 +71,18 @@ vim user/$TITAN_USER/cluster_paths.toml
 ### 4. Run Training
 
 ```bash
-# Set your user (REQUIRED)
+# Set your user and cluster (REQUIRED)
 export TITAN_USER=your_username
+export CLUSTER=juwels  # or capella
 
-# Submit training job
-sbatch slurm_juwels.sh
+# Submit training job (auto-selects slurm/juwels.sh)
+bash submit_job.sh
 
 # Or with custom dataset/config
-DATASET=fineweb_edu CONFIG=qwen3_custom.toml sbatch slurm_juwels.sh
+DATASET=fineweb_edu CONFIG=qwen3_custom.toml bash submit_job.sh
+
+# Explicit script path also works
+bash submit_job.sh slurm/juwels.sh
 ```
 
 ## Models
@@ -98,7 +102,7 @@ DATASET=fineweb_edu CONFIG=qwen3_custom.toml sbatch slurm_juwels.sh
 | `DATASET` | Dataset name from cluster_paths.toml | No (default: slimpajama_627b) |
 | `TOKENIZER` | Tokenizer name from cluster_paths.toml | No (default: neox) |
 | `CONFIG` | Base config file | No (default: base_plus.toml) |
-| `CLUSTER` | Override cluster detection | No (auto-detected) |
+| `CLUSTER` | Cluster name (auto-selects `slurm/<CLUSTER>.sh`) | Yes (or provide script path) |
 
 ### Directory Structure
 
@@ -112,7 +116,10 @@ titan-oellm/
 ├── user/                  # User-specific configurations
 │   └── example/           # Template configs (copy these)
 ├── scripts/               # Utility scripts
-├── slurm_*.sh             # Cluster-specific job scripts
+├── slurm/                 # SLURM job scripts per cluster
+│   ├── juwels.sh
+│   └── capella.sh
+├── submit_job.sh          # Job submission wrapper
 └── torchtitan/            # TorchTitan submodule (v0.2.0)
 ```
 

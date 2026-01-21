@@ -1,0 +1,115 @@
+# Local development configuration template
+#
+
+[job]
+experiment_folder = "experiments/local_test"
+custom_config_module = "titan_oellm.configs.sci_job_config"
+
+
+[model]
+name = "qwen3_custom"
+flavor = "debugmodel"
+tokenizer_path = "/home/joerg/workspace/data/huggingface/tokenizer/neox"
+# Qwen3-specific parameters
+qk_norm = true  # Enable QK normalization in attention
+rope_theta = 1000000  # RoPE theta value for rotary embeddings
+head_dim = 128  # Dimension per attention head
+hidden_dim = 3072  # FFN hidden dimension
+norm_eps = 1e-6  # Layer normalization epsilon
+depth_init = true  # Use depth-dependent initialization
+enable_weight_tying = false  # Tie embedding and output head weights (reduces params)
+
+
+[metrics]
+log_freq = 50
+disable_color_printing = false
+enable_tensorboard = true  # Enable TensorBoard for parameter logging
+save_tb_folder = "tb"
+
+
+[parameter_logging]
+enabled = true                # Enable parameter statistics logging
+log_interval = 50           # Log parameter stats every 100 steps
+log_parameters = true         # Log parameter statistics (max, min, norm, std)
+log_gradients = true          # Log gradient statistics
+log_optimizer_states = true   # Log AdamW optimizer statistics
+include_patterns = []         # Include all parameters (empty = include all)
+exclude_patterns = []         # Log all parameters including bias
+
+
+[training]
+dataset = "sci_dataset"
+local_batch_size = 2
+seq_len = 512
+steps = 5000
+mixed_precision_param = "bfloat16"
+
+
+[optimizer]
+name = "AdamW"
+lr = 2e-3
+weight_decay = 0.0
+
+
+[lr_scheduler]
+# Scheduler type selection
+scheduler_type = "universal_ou"  # Universal scheduler that can emulate all others
+lr_min_absolute = 1e-5      # Absolute minimum learning rate
+# Phase 1 - Warm phase (warmup or warmdown)
+warm_steps = 0              # Absolute warm steps (mutually exclusive with warm_ratio, both can be 0)
+warm_ratio = 0.0            # Warm steps as ratio of total (mutually exclusive with warm_steps, both can be 0)
+warm_direction = "up"       # Direction: "up" (warmup) or "down" (warmdown)
+warm_type = "linear"        # Decay curve: "linear", "cosine", "exp", "sqrt"
+warm_start_ratio = 2.0      # Starting LR multiplier for warmdown (only used when warm_direction="down")
+# Phase 2 - Main phase (with optional OU process)
+main_decay_type = "const"   # Base schedule decay: "const", "linear", "cosine", "exp", "sqrt"
+main_decay_ratio = 0.2      # Target LR ratio at end of main phase (e.g., 0.2 = 20% of base_lr)
+# Phase 3 - Cooldown phase
+cooldown_steps = 0          # Absolute cooldown steps (mutually exclusive with cooldown_ratio, both can be 0)
+cooldown_ratio = 0.2        # Cooldown steps as ratio of total (20% of total training steps)
+cooldown_type = "cosine"    # Decay curve: "linear", "cosine", "exp", "sqrt"
+
+
+[parallelism]
+data_parallel_replicate_degree = 1
+data_parallel_shard_degree = 1
+enable_compiled_autograd = false  # Enable CompiledAutograd to compile the backward pass (requires compile=true)
+
+
+[activation_checkpoint]
+mode = "none"
+selective_ac_option = "2"
+early_stop = false
+memory_budget = 0.5
+visualize_memory_budget_pareto = false
+
+
+[compile]
+enable=true
+components = ["model", "loss"]
+
+
+[checkpoint]
+enable = false
+folder = "checkpoint"
+interval = 500
+last_save_model_only = false
+export_dtype = "float16"
+async_mode = "disabled" # ["disabled", "async", "async_with_pinned_mem"]
+
+
+[data]
+# Local dataset path (use small subset for testing)
+data_prefix = "/home/joerg/workspace/data/huggingface/openwebtext/tokenized_neox/merged_text_document"
+chunks_dir = "/home/joerg/workspace/data/huggingface/openwebtext/tokenized_neox/merged_text_document_chunks"
+dataloader = "MMapDataset"
+local_batch_size = 2
+seq_len = 1024
+
+
+[sci_tokenizer]
+default_add_bos = true
+default_add_eos = false
+
+[experimental]
+custom_import = "titan_oellm.models"

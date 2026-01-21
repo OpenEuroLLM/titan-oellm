@@ -3,14 +3,14 @@
 # JUWELS SLURM Training Script
 #
 # Usage:
-#   sbatch slurm_juwels.sh                                    # Default: juwels + norm_gpt + slimpajama + neox
-#   sbatch slurm_juwels.sh --model.flavor=1B --training.steps=20000  # Override parameters
+#   bash submit_job.sh slurm/juwels.sh                                    # Default: juwels + norm_gpt + slimpajama + neox
+#   bash submit_job.sh slurm/juwels.sh --model.flavor=1B --training.steps=20000  # Override parameters
 #
-#   DATASET=fineweb_edu sbatch slurm_juwels.sh               # Use different dataset
-#   TOKENIZER=llama3 sbatch slurm_juwels.sh                  # Use different tokenizer
-#   CONFIG=base_plus.toml sbatch slurm_juwels.sh             # Use gpt_plus model
-#   CLUSTER=jupiter sbatch slurm_juwels.sh                   # Use different cluster paths (for testing)
-#   TITAN_USER=your_username sbatch slurm_juwels.sh          # Use your user config (REQUIRED)
+#   DATASET=fineweb_edu bash submit_job.sh slurm/juwels.sh               # Use different dataset
+#   TOKENIZER=llama3 bash submit_job.sh slurm/juwels.sh                  # Use different tokenizer
+#   CONFIG=base_plus.toml bash submit_job.sh slurm/juwels.sh             # Use gpt_plus model
+#   CLUSTER=jupiter bash submit_job.sh slurm/juwels.sh                   # Use different cluster paths (for testing)
+#   TITAN_USER=your_username bash submit_job.sh slurm/juwels.sh          # Use your user config (REQUIRED)
 #
 # Environment variables:
 #   TITAN_USER - Username for user-specific configs (REQUIRED)
@@ -38,8 +38,8 @@ export NCCL_IB_RETRY_CNT=20
 export NCCL_ALGO=Ring
 export NCCL_SOCKET_IFNAME=ib0
 export GLOO_SOCKET_IFNAME=ib0
-export NCCL_SOCKET_FAMILY=AF_INET  
-export GLOO_SOCKET_FAMILY=AF_INET  
+export NCCL_SOCKET_FAMILY=AF_INET
+export GLOO_SOCKET_FAMILY=AF_INET
 
 
 # Dataset and Tokenizer configuration - set via environment or use defaults
@@ -159,9 +159,9 @@ echo "Validation passed."
 for (( i=0; i<$SLURM_NNODES; i++ )); do
     node=${nodes[$i]}
     node_ip=$(nslookup ${node}i | grep "Address:" | tail -n1 | awk '{print $2}')
-    
+
     SRUN_ARGS="--exclusive -N1 -n1 -w ${node}"
-    
+
     LAUNCHER="torchrun \
         --nnodes=$SLURM_NNODES \
         --nproc_per_node=4 \
@@ -171,11 +171,11 @@ for (( i=0; i<$SLURM_NNODES; i++ )); do
         --local_addr=$node_ip \
         --rdzv_backend=static \
         --rdzv_endpoint=$MASTER_IP:29500"
-    
+
     srun $SRUN_ARGS $APPTAINER bash -c '
         cd /opt/titan-oellm
         exec '"$LAUNCHER -m torchtitan.train --job.config_file=/opt/titan-oellm/titan_oellm/configs/$CONFIG $CLUSTER_ARGS $@" &
-    
+
     if [ $i -eq 0 ]; then
         sleep 10
     else
@@ -183,4 +183,3 @@ for (( i=0; i<$SLURM_NNODES; i++ )); do
     fi
 done
 wait
-

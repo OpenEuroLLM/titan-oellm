@@ -655,6 +655,7 @@ def get_env_exports(
     config = get_cluster_config(cluster, user)
 
     exports = []
+    exports.append(f'export OUTPUT_DIR="{config["output_dir"]}"')
     exports.append(f'export TRITON_CACHE_DIR="{config["triton_cache"]}"')
     exports.append(f'export HF_DATASETS_CACHE="{config["hf_datasets_cache"]}"')
     exports.append(f'export HF_HOME="{config["hf_home"]}"')
@@ -667,6 +668,37 @@ def get_env_exports(
         exports.append(f'export DATA_DIR="{config["data_dir"]}"')
 
     return '\n'.join(exports)
+
+
+def get_submit_config(
+    cluster: Optional[str] = None,
+    user: Optional[str] = None
+) -> dict:
+    """
+    Get configuration needed for job submission (before job starts).
+
+    This function is used by the submit_job.sh wrapper to get output directory
+    paths before submitting a job to SLURM.
+
+    Args:
+        cluster: Cluster name (auto-detected if None)
+        user: Username for config lookup (defaults to TITAN_USER env var)
+
+    Returns:
+        dict: Dictionary with submission configuration:
+            - output_dir: Path to output/logs directory
+            - cluster: Resolved cluster name
+
+    Example:
+        >>> config = get_submit_config('juwels')
+        >>> print(config['output_dir'])
+        /p/scratch/project/user/experiments/slurm
+    """
+    config = get_cluster_config(cluster, user)
+    return {
+        'output_dir': config['output_dir'],
+        'cluster': cluster if cluster else detect_cluster(),
+    }
 
 
 if __name__ == "__main__":

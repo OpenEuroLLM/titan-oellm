@@ -314,9 +314,7 @@ python torchtitan/scripts/download_hf_assets.py \
 # 2. Create config (configs/finetune_qwen3_0.6B.toml)
 cat > configs/finetune_qwen3_0.6B.toml << 'EOF'
 [job]
-dump_folder = "./outputs/finetune_qwen3_0.6B"
-description = "Fine-tuning Qwen3 0.6B"
-custom_config_module = "titan_oellm.configs.sci_job_config"
+experiment_folder = "train_qwen3_0.6B"  # Resolved under $OUTPUT_DIR
 
 [model]
 name = "qwen3_custom"

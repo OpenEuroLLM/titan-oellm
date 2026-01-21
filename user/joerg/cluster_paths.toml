@@ -16,16 +16,16 @@
 # Configure paths for each HPC cluster you use
 
 ["cluster.juwels"]
-output_dir = "/p/scratch/<YOUR_PROJECT>/<YOUR_USER_ID>/experiments"
-cache_base = "/p/scratch/<YOUR_PROJECT>/<YOUR_USER_ID>/cache"
-hf_datasets_cache = "/p/project1/<YOUR_PROJECT>/<YOUR_USER_ID>/data/cache/"
-hf_home = "/p/project1/<YOUR_PROJECT>/<YOUR_USER_ID>/model/cache/"
+output_dir = "/p/project1/projectnucleus/franke5/experiments/titan-oellm"
+cache_base = "/p/scratch/projectnucleus/franke5/cache"
+hf_datasets_cache = "/p/scratch/projectnucleus/franke5/cache/hf"
+hf_home = "/p/project1/transfernetx/franke5/model/cache"
 
 
-["cluster.capella"]
-output_dir = "/data/horse/ws/<YOUR_USER_ID>-workspace/experiments/slurm"
-cache_base = "/data/cat/ws/<YOUR_USER_ID>-titan/cache"
-data_dir = "/data/cat/ws/<YOUR_USER_ID>-titan/data"
+# ["cluster.capella"]
+# output_dir = "/data/horse/ws/<YOUR_USER_ID>-workspace/experiments/slurm"
+# cache_base = "/data/cat/ws/<YOUR_USER_ID>-titan/cache"
+# data_dir = "/data/cat/ws/<YOUR_USER_ID>-titan/data"
 
 # ============================================================================
 # TOKENIZERS
@@ -33,10 +33,10 @@ data_dir = "/data/cat/ws/<YOUR_USER_ID>-titan/data"
 # Add paths to your tokenizers for each cluster
 
 ["tokenizer.neox.juwels"]
-path = "/p/project1/<YOUR_PROJECT>/<YOUR_USER_ID>/data/tokenizer/neox"
+path = "/p/project1/transfernetx/franke5/data/tokenizer/neox"
 
-["tokenizer.neox.capella"]
-path = "/data/cat/ws/<YOUR_USER_ID>-titan/data/tokenizer/neox"
+["tokenizer.nemotron.juwels"]
+path = "/p/project1/transfernetx/franke5/data/tokenizer/nemotron"
 
 # Add more tokenizers as needed:
 # ["tokenizer.llama3.juwels"]
@@ -49,18 +49,27 @@ path = "/data/cat/ws/<YOUR_USER_ID>-titan/data/tokenizer/neox"
 
 # Example: SlimPajama dataset tokenized with neox
 ["dataset.slimpajama_627b.neox.juwels"]
-train_prefix = "/p/scratch/<YOUR_PROJECT>/<YOUR_USER_ID>/data/datasets/SlimPajama-627B/train/merged"
-train_chunks = "/p/scratch/<YOUR_PROJECT>/<YOUR_USER_ID>/data/datasets/SlimPajama-627B/train/chunks"
-validation_prefix = "/p/scratch/<YOUR_PROJECT>/<YOUR_USER_ID>/data/datasets/SlimPajama-627B/validation/merged"
+train_prefix = "/p/data1/datasets/mmlaion/franke5/chunked/cerebras-SlimPajama-627B/train/merged"
+train_chunks = "/p/data1/datasets/mmlaion/franke5/chunked/cerebras-SlimPajama-627B/train/chunks"
+validation_prefix = "/p/data1/datasets/mmlaion/franke5/tokenized_neox/cerebras-SlimPajama-627B/validation/merged"
 dataloader = "ChunkedMMapDataset"
 min_doc_len = 128
 
-["dataset.slimpajama_627b.neox.capella"]
-train_prefix = "/data/cat/ws/<YOUR_USER_ID>-titan/data/SlimPajama-627B/train/merged"
-train_chunks = "/data/cat/ws/<YOUR_USER_ID>-titan/data/SlimPajama-627B/train/chunks"
-validation_prefix = "/data/cat/ws/<YOUR_USER_ID>-titan/data/SlimPajama-627B/validation/merged"
+
+["dataset.nemotron_cc.neox.juwels"]
+train_chunks = "/p/data1/datasets/mmlaion/franke5/chunked/neox_neomotron_cc_v1"
+validation_prefix = "/p/data1/datasets/mmlaion/franke5/chunked/neox_neomotron_cc_v1/chunk_0000"
+train_prefix = "/p/data1/datasets/mmlaion/franke5/chunked/neox_neomotron_cc_v1/chunk_0000"
 dataloader = "ChunkedMMapDataset"
 min_doc_len = 128
+
+["dataset.nemotron_cc.nemotron.juwels"]
+train_chunks = "/p/data1/datasets/mmlaion/franke5/chunked/nemotron_neomotron_cc_v1"
+validation_prefix = "/p/data1/datasets/mmlaion/franke5/chunked/nemotron_neomotron_cc_v1/chunk_0000"
+train_prefix = "/p/data1/datasets/mmlaion/franke5/chunked/nemotron_neomotron_cc_v1/chunk_0000"
+dataloader = "ChunkedMMapDataset"
+min_doc_len = 128
+
 
 # ============================================================================
 # BENCHMARKS
@@ -69,7 +78,4 @@ min_doc_len = 128
 # Use scripts/download_benchmarks.py to create them
 
 ["benchmarks.neox.juwels"]
-path = "/p/project1/<YOUR_PROJECT>/<YOUR_USER_ID>/data/benchmarks/neox"
-
-["benchmarks.neox.capella"]
-path = "/data/cat/ws/<YOUR_USER_ID>-titan/data/benchmarks/neox"
+path = "/p/project1/transfernetx/franke5/data/benchmarks/neox"

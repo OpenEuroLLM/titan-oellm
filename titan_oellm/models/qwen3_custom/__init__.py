@@ -24,13 +24,13 @@ from torchtitan.distributed.pipeline_parallel import pipeline_llm
 
 from .infra.parallelize import parallelize_qwen3_custom
 from .model.args import Qwen3CustomModelArgs
-from .model.model import Qwen3
+from .model.model import Qwen3Model
 from .model.state_dict_adapter import Qwen3StateDictAdapter
 
 __all__ = [
     "parallelize_qwen3_custom",
     "Qwen3CustomModelArgs",
-    "Qwen3",
+    "Qwen3Model",
     "Qwen3StateDictAdapter",
     "qwen3_custom_configs",
 ]
@@ -166,7 +166,7 @@ def get_train_spec() -> TrainSpec:
     - HuggingFace checkpoint loading via state_dict_adapter
     """
     return TrainSpec(
-        model_cls=Qwen3,
+        model_cls=Qwen3Model,
         model_args=qwen3_custom_configs,
         parallelize_fn=parallelize_qwen3_custom,
         pipelining_fn=pipeline_llm,  # Standard torchtitan v0.2.0 pipeline

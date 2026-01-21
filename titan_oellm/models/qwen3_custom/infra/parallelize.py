@@ -7,6 +7,8 @@
 # This file applies the PT-D parallelisms (except pipeline parallelism) and various
 # training techniques (e.g. activation checkpointing and compile) to the Llama model.
 
+import os
+
 import torch
 import torch.nn as nn
 
@@ -107,6 +109,16 @@ def parallelize_qwen3_custom(
             etp_enabled=parallel_dims.etp_enabled,
         )
 
+    base_ac_folder = (
+        getattr(job_config.job, "experiment_folder", None)
+        or getattr(job_config.job, "dump_folder", None)
+        or "experiment"
+    )
+    output_root = os.environ.get("OUTPUT_DIR")
+    if output_root:
+        base_ac_folder = os.path.join(output_root, base_ac_folder)
+    base_ac_folder = os.path.expandvars(base_ac_folder)
+
     if job_config.activation_checkpoint.mode != "none":
         apply_ac(
             model,
@@ -114,7 +126,7 @@ def parallelize_qwen3_custom(
             model_compile_enabled=model_compile_enabled,
             use_flex_attn=use_flex_attn,
             op_sac_save_list=_op_sac_save_list,
-            base_folder=job_config.job.dump_folder,
+            base_folder=base_ac_folder,
         )
 
     # turn on per-TransformerBlock compile after AC wrapping and before FSDP

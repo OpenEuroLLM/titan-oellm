@@ -3,13 +3,13 @@
 # Capella SLURM Training Script
 #
 # Usage:
-#   sbatch slurm_capella.sh                                    # Default: capella + norm_gpt + slimpajama + neox
-#   sbatch slurm_capella.sh --model.flavor=1B --training.steps=20000  # Override parameters
+#   bash submit_job.sh slurm/capella.sh                                    # Default: capella + norm_gpt + slimpajama + neox
+#   bash submit_job.sh slurm/capella.sh --model.flavor=1B --training.steps=20000  # Override parameters
 #
-#   DATASET=fineweb_edu sbatch slurm_capella.sh               # Use different dataset
-#   TOKENIZER=llama3 sbatch slurm_capella.sh                  # Use different tokenizer
-#   CONFIG=base_plus.toml sbatch slurm_capella.sh             # Use gpt_plus model
-#   TITAN_USER=korbi sbatch slurm_capella.sh                  # Use different user's config (default: joerg)
+#   DATASET=fineweb_edu bash submit_job.sh slurm/capella.sh               # Use different dataset
+#   TOKENIZER=llama3 bash submit_job.sh slurm/capella.sh                  # Use different tokenizer
+#   CONFIG=base_plus.toml bash submit_job.sh slurm/capella.sh             # Use gpt_plus model
+#   TITAN_USER=korbi bash submit_job.sh slurm/capella.sh                  # Use different user's config (default: joerg)
 #
 # Environment variables:
 #   TITAN_USER - Username for user-specific configs (default: joerg)
@@ -205,5 +205,3 @@ srun $SRUN_ARGS $APPTAINER bash -c '
     export TRITON_CACHE_DIR="${RANK_TRITON_CACHE}"
     export TORCHINDUCTOR_CACHE_DIR="${RANK_TRITON_CACHE}"
     exec '"$LAUNCHER -m torchtitan.train --job.config_file=/opt/titan-oellm/titan_oellm/configs/$CONFIG $CLUSTER_ARGS $@"
-
-

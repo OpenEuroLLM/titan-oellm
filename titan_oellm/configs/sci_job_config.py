@@ -3,6 +3,15 @@
 from dataclasses import dataclass, field
 from typing import Literal
 from torchtitan.config import JobConfig as BaseJobConfig, Model as BaseModel, LRScheduler as BaseLRScheduler
+from torchtitan.config.job_config import Job as BaseJob
+
+
+@dataclass
+class Job(BaseJob):
+    """Extended Job config with experiment_folder field."""
+
+    experiment_folder: str = "default_experiment"
+    """Experiment folder name (used for output organization)"""
 
 
 @dataclass
@@ -327,6 +336,7 @@ class JobConfig(BaseJobConfig):
     """
 
     # Override base fields with extended versions
+    job: Job = field(default_factory=Job)
     model: Model = field(default_factory=Model)
     lr_scheduler: LRScheduler = field(default_factory=LRScheduler)
     validation: Validation = field(default_factory=Validation)
