@@ -144,10 +144,10 @@ class UniversalLR(_LRScheduler):
         # Validate and compute phase durations (must be after all parameters are set)
         self._validate_and_compute_phases()
 
-        # State for each parameter group
-        self._main_end_lrs = None
-
         super().__init__(optimizer, last_epoch)
+
+        # State for each parameter group (initialize after super().__init__ so we know num groups)
+        self._main_end_lrs = [None] * len(self.optimizer.param_groups)
 
     def _validate_and_compute_phases(self):
         """Validate parameters and compute phase durations."""
