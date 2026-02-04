@@ -21,9 +21,6 @@ cache_base = "/p/scratch/<YOUR_PROJECT>/<YOUR_USER_ID>/cache"
 hf_datasets_cache = "/p/project1/<YOUR_PROJECT>/<YOUR_USER_ID>/data/cache/"
 hf_home = "/p/project1/<YOUR_PROJECT>/<YOUR_USER_ID>/model/cache/"
 
-["cluster.jupiter"]
-output_dir = "/e/project1/<YOUR_PROJECT>/<YOUR_USER_ID>/experiments/slurm"
-cache_base = "/e/project1/<YOUR_PROJECT>/<YOUR_USER_ID>/cache"
 
 ["cluster.capella"]
 output_dir = "/data/horse/ws/<YOUR_USER_ID>-workspace/experiments/slurm"
@@ -37,9 +34,6 @@ data_dir = "/data/cat/ws/<YOUR_USER_ID>-titan/data"
 
 ["tokenizer.neox.juwels"]
 path = "/p/project1/<YOUR_PROJECT>/<YOUR_USER_ID>/data/tokenizer/neox"
-
-["tokenizer.neox.jupiter"]
-path = "/e/project1/<YOUR_PROJECT>/<YOUR_USER_ID>/data/tokenizer/neox"
 
 ["tokenizer.neox.capella"]
 path = "/data/cat/ws/<YOUR_USER_ID>-titan/data/tokenizer/neox"
@@ -61,13 +55,6 @@ validation_prefix = "/p/scratch/<YOUR_PROJECT>/<YOUR_USER_ID>/data/datasets/Slim
 dataloader = "ChunkedMMapDataset"
 min_doc_len = 128
 
-["dataset.slimpajama_627b.neox.jupiter"]
-train_prefix = "/e/project1/<YOUR_PROJECT>/<YOUR_USER_ID>/data/datasets/SlimPajama-627B/train/merged"
-train_chunks = "/e/project1/<YOUR_PROJECT>/<YOUR_USER_ID>/data/datasets/SlimPajama-627B/train/chunks"
-validation_prefix = "/e/project1/<YOUR_PROJECT>/<YOUR_USER_ID>/data/datasets/SlimPajama-627B/validation/merged"
-dataloader = "ChunkedMMapDataset"
-min_doc_len = 128
-
 ["dataset.slimpajama_627b.neox.capella"]
 train_prefix = "/data/cat/ws/<YOUR_USER_ID>-titan/data/SlimPajama-627B/train/merged"
 train_chunks = "/data/cat/ws/<YOUR_USER_ID>-titan/data/SlimPajama-627B/train/chunks"
@@ -83,9 +70,6 @@ min_doc_len = 128
 
 ["benchmarks.neox.juwels"]
 path = "/p/project1/<YOUR_PROJECT>/<YOUR_USER_ID>/data/benchmarks/neox"
-
-["benchmarks.neox.jupiter"]
-path = "/e/project1/<YOUR_PROJECT>/<YOUR_USER_ID>/data/benchmarks/neox"
 
 ["benchmarks.neox.capella"]
 path = "/data/cat/ws/<YOUR_USER_ID>-titan/data/benchmarks/neox"

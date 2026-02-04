@@ -2,17 +2,8 @@
 #
 # Jupiter SLURM Training Script
 #
-# Usage:
-#   sbatch slurm_jupiter.sh                                    # Default: jupiter + norm_gpt + slimpajama + neox
-#   sbatch slurm_jupiter.sh --model.flavor=1B --training.steps=20000  # Override parameters
-#
-#   DATASET=fineweb_edu sbatch slurm_jupiter.sh               # Use different dataset
-#   TOKENIZER=llama3 sbatch slurm_jupiter.sh                  # Use different tokenizer
-#   CONFIG=base_plus.toml sbatch slurm_jupiter.sh             # Use gpt_plus model
-#   TITAN_USER=korbi sbatch slurm_jupiter.sh                  # Use different user's config (default: joerg)
-#
 # Environment variables:
-#   TITAN_USER - Username for user-specific configs (default: joerg)
+#   TITAN_USER - Username for user-specific configs (default: user)
 #   CLUSTER    - Cluster name from cluster_paths.toml (default: jupiter)
 #   DATASET    - Dataset name from cluster_paths.toml (default: slimpajama_627b)
 #   TOKENIZER  - Tokenizer name from cluster_paths.toml (default: neox)
@@ -87,16 +78,15 @@ NUM_GPUS_PER_NODE=4
 SLURM_CPUS_PER_TASK=18
 
 # Dataset and Tokenizer configuration - set via environment or use defaults
-export TITAN_USER="${TITAN_USER:-joerg}"     # Username for user-specific configs (user/{joerg,korbi})
-CLUSTER="jupiter"            # Cluster name (juwels, jupiter, capella)
+export TITAN_USER="${TITAN_USER:-user}"     # Username for user-specific configs
+CLUSTER="jupiter"                        # Cluster name
 DATASET="${DATASET:-slimpajama_627b}"    # Dataset name from cluster_paths.toml
 TOKENIZER="${TOKENIZER:-neox}"           # Tokenizer name from cluster_paths.toml
-CONFIG="${CONFIG:-base_norm.toml}"       # Base config file (base_norm.toml or base_plus.toml)
+CONFIG="${CONFIG:-base_plus.toml}"       # Base config file
 CONTAINER="${CONTAINER:-titan_jupiter_0.2.1.sif}"     
 
 # Project and container configuration
 PROJECT_DIR=$(pwd)                       # Assume script is run from project root
-
 
 
 # ============================================================================
