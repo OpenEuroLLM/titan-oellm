@@ -850,7 +850,7 @@ class SciValidator(BaseValidator):
                 dist.all_reduce(
                     has_data_tensor,
                     op=dist.ReduceOp.MIN,
-                    group=parallel_dims.world_mesh["dp_cp"].get_group()
+                    group=parallel_dims.get_optional_mesh("loss").get_group()
                 )
 
             # If any rank ran out of data, stop validation
@@ -969,7 +969,7 @@ class SciValidator(BaseValidator):
             # Reduce across DP ranks if needed
             if parallel_dims.dp_cp_enabled:
                 avg_val_loss = dist_utils.dist_mean(
-                    avg_val_loss, parallel_dims.world_mesh["dp_cp"]
+                    avg_val_loss, parallel_dims.get_optional_mesh("loss")
                 )
                 # dist_mean already returns a float
                 val_loss = avg_val_loss
@@ -985,7 +985,7 @@ class SciValidator(BaseValidator):
                     import torch.distributed as dist
                     # Reduce accuracy across DP ranks
                     accuracy_tensor = torch.tensor(val_accuracy, device=device_type)
-                    dist.all_reduce(accuracy_tensor, op=dist.ReduceOp.AVG, group=parallel_dims.world_mesh["dp_cp"].get_group())
+                    dist.all_reduce(accuracy_tensor, op=dist.ReduceOp.AVG, group=parallel_dims.get_optional_mesh("loss").get_group())
                     val_accuracy = accuracy_tensor.item()
             else:
                 val_accuracy = 0.0
