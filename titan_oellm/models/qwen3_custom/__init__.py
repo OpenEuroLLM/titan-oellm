@@ -41,16 +41,16 @@ __all__ = [
 qwen3_custom_configs = {
     "debugmodel": Qwen3CustomModelArgs(
         dim=256,
-        n_layers=4,
-        n_heads=4,
-        n_kv_heads=4,
+        n_layers=2,
+        n_heads=2,
+        n_kv_heads=2,
         vocab_size=151936,
-        head_dim=64,
+        head_dim=128,
         hidden_dim=1024,
         norm_eps=1e-6,
         rope_theta=1000000,
         qk_norm=True,
-        max_seq_len=2048,
+        max_seq_len=1024,
         depth_init=True,
     ),
     "0.5B": Qwen3CustomModelArgs(

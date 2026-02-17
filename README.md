@@ -220,6 +220,42 @@ cooldown_type = "cosine"
 ```
 
 
+
+## Development
+
+### Update TorchTitan Version
+
+To update the TorchTitan submodule to a newer version:
+
+```bash
+# Navigate to the torchtitan submodule
+cd torchtitan
+
+# Fetch latest tags and branches
+git fetch --all --tags
+
+# Checkout desired version (e.g., v0.3.0)
+git checkout v0.2.1
+
+# Verify the version
+git describe --tags
+
+# Go back to project root
+cd ..
+
+# Commit the submodule update
+git add torchtitan
+git commit -m "Update torchtitan to v0.3.0"
+```
+
+After updating TorchTitan, rebuild the container:
+
+```bash
+# Update container definition if needed (titan_0.3.0.def)
+apptainer build --fakeroot titan_juwels_0.2.1.sif titan_0.2.1.def
+```
+
+
 ## Troubleshooting
 
 ### TITAN_USER not set

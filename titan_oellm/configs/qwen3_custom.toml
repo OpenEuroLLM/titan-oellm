@@ -3,6 +3,7 @@
 
 [job]
 experiment_folder = "qwen3_custom"
+custom_config_module = "titan_oellm.configs.sci_job_config"
 
 [model]
 name = "qwen3_custom"
@@ -139,7 +140,7 @@ max_eval_samples = 50000  # Total samples across all workers (-1 = full validati
 # Standard benchmarks (WikiText, LAMBADA)
 # Paths are automatically set via get_cli_args() from cluster_paths.toml
 [benchmarks]
-enable = true
+enable = false
 wikitext2_path = ""  # Path prefix for WikiText-2 (set via CLI from cluster_paths.toml)
 wikitext103_path = ""  # Path prefix for WikiText-103 (set via CLI from cluster_paths.toml)
 lambada_path = ""  # Path prefix for LAMBADA (set via CLI from cluster_paths.toml)

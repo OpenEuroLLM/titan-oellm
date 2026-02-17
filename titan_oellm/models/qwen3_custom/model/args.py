@@ -125,4 +125,4 @@ class Qwen3CustomModelArgs(BaseModelArgs):
         Returns:
             (num_params, flops_per_token)
         """
-        return get_moe_model_nparams_and_flops(self, model, seq_len)
+        return get_moe_model_nparams_and_flops(self, model, self.head_dim, seq_len)

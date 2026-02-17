@@ -13,7 +13,6 @@ tokenizer_path = "/home/joerg/workspace/data/huggingface/tokenizer/neox"
 # Qwen3-specific parameters
 qk_norm = true  # Enable QK normalization in attention
 rope_theta = 1000000  # RoPE theta value for rotary embeddings
-head_dim = 64  # Dimension per attention head
 hidden_dim = 1024  # FFN hidden dimension
 norm_eps = 1e-6  # Layer normalization epsilon
 depth_init = true  # Use depth-dependent initialization

@@ -29,8 +29,11 @@
 #SBATCH --output=/data/.../slurm/mpi-out.%j
 #SBATCH --error=/data/.../slurm/mpi-err.%j
 
+# ============================================================================
+# SETUP
+# ============================================================================
+PROJECT_DIR=$(pwd)  # Assume script is run from project root
 
-export NCCL_SOCKET_TIMEOUT=60000
 export NCCL_TIMEOUT=1800
 export NCCL_IB_TIMEOUT=100
 export NCCL_IB_RETRY_CNT=20
