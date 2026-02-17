@@ -221,6 +221,8 @@ __marimo__/
 # Keep example templates
 !/user/example/
 experiments/
+outputs/
+output/
 
 # Training outputs and experiment results
 /titan_oellm/outputs/

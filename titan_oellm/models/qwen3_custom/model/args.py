@@ -5,8 +5,6 @@
 # LICENSE file in the root directory of this source tree.
 #
 # Copyright (c) Meta Platforms, Inc. All Rights Reserved.
-#
-# Adapted for titan-sci with custom config integration
 
 
 from dataclasses import dataclass, field
@@ -46,7 +44,7 @@ class Qwen3CustomModelArgs(BaseModelArgs):
     max_seq_len: int = 4096
     depth_init: bool = True
 
-    use_flex_attn: bool = False
+    attn_type: str = "sdpa"
     attn_mask_type: str = "causal"
     eos_id: int = 151645
 
@@ -58,13 +56,6 @@ class Qwen3CustomModelArgs(BaseModelArgs):
     moe_args: MoEArgs = field(default_factory=MoEArgs)
 
     def update_from_config(self, job_config: JobConfig, **kwargs) -> None:
-        """
-        Update model arguments from job_config (sci_job_config.py).
-
-        This method enables integration with titan-sci TOML configuration files.
-        All parameters set in [model] section of the config will be read here.
-        """
-        # Update max_seq_len from training config
         seq_len = job_config.training.seq_len
         if seq_len > self.max_seq_len:
             logger.warning(
@@ -100,29 +91,8 @@ class Qwen3CustomModelArgs(BaseModelArgs):
 
         # MoE debug force load balance
         self.moe_args._debug_force_load_balance = (
-            job_config.training.debug_moe_force_load_balance
+            job_config.debug.moe_force_load_balance
         )
 
-        # Compatibility checks
-        if job_config.activation_checkpoint.mode == "selective" and self.use_flex_attn:
-            raise ValueError(
-                "FlexAttention is not compatible with selective AC yet. "
-                "See https://github.com/pytorch/pytorch/issues/147879"
-            )
-
-        if job_config.parallelism.context_parallel_degree > 1 and self.use_flex_attn:
-            raise ValueError(
-                "FlexAttention is not compatible with CP yet. "
-                "We are still working on this."
-            )
-
-    def get_nparams_and_flops(
-        self, model: nn.Module, seq_len: int
-    ) -> tuple[int, float]:
-        """
-        Calculate number of parameters and FLOPs per token.
-
-        Returns:
-            (num_params, flops_per_token)
-        """
-        return get_moe_model_nparams_and_flops(self, model, self.head_dim, seq_len)
+    def get_nparams_and_flops(self, model: nn.Module, seq_len: int) -> tuple[int, int]:
+        return get_moe_model_nparams_and_flops(self, model, 2 * self.head_dim, seq_len)
