@@ -23,7 +23,6 @@ cache_base = "/home/joerg/workspace/cache"
 output_dir = "/p/scratch/projectnucleus/franke5/experiments"
 cache_base = "/p/scratch/projectnucleus/franke5/cache"
 
-
 ["cluster.capella"]
 output_dir = "/data/cat/ws/jrfr770h-titan/experiments"
 cache_base = "/data/cat/ws/jrfr770h-titan/cache"

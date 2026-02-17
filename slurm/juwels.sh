@@ -71,7 +71,7 @@ echo "Loading cluster configuration for user '$TITAN_USER' on cluster '$CLUSTER'
 # Load all cluster configuration as environment variables (run in container)
 eval "$(apptainer exec \
     --env TITAN_USER=$TITAN_USER \
-    --bind $PROJECT_DIR:/opt/titan-sci \
+    --bind $PROJECT_DIR:/opt/titan-oellm \
     $PROJECT_DIR/$CONTAINER \
     python3 -c "
 import sys
