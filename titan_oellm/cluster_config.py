@@ -280,43 +280,100 @@ def get_paths(dataset: str, tokenizer: str, cluster: Optional[str] = None, user:
     return cfg
 
 
+def resolve_config_path(config_file: str, base_path: str = '/opt/titan-oellm') -> str:
+    """
+    Resolve config file path by searching model train_configs directories first,
+    then falling back to the configs directory.
+
+    Search order:
+    1. {base_path}/titan_oellm/models/*/train_configs/{config_file}
+    2. {base_path}/titan_oellm/configs/{config_file}
+
+    Args:
+        config_file: Config filename (e.g., 'qwen3_custom.toml')
+        base_path: Base path to the titan-oellm installation (default: '/opt/titan-oellm')
+
+    Returns:
+        str: Absolute path to the resolved config file
+
+    Raises:
+        FileNotFoundError: If config file not found in any location
+    """
+    base = Path(base_path)
+
+    # If config_file is already an absolute path, return it
+    if config_file.startswith('/'):
+        return config_file
+
+    # If config_file contains a path separator, treat as relative path
+    if '/' in config_file:
+        return str(base / config_file)
+
+    # Search in model train_configs directories
+    models_dir = base / "titan_oellm" / "models"
+    if models_dir.exists():
+        for model_dir in models_dir.iterdir():
+            if model_dir.is_dir():
+                train_configs = model_dir / "train_configs"
+                if train_configs.exists():
+                    config_path = train_configs / config_file
+                    if config_path.exists():
+                        return str(config_path)
+
+    # Fallback to configs directory
+    configs_dir = base / "titan_oellm" / "configs"
+    fallback_path = configs_dir / config_file
+    if fallback_path.exists():
+        return str(fallback_path)
+
+    # Config not found - return the fallback path anyway (validation will catch it)
+    # This allows validate_paths to report the error properly
+    return str(fallback_path)
+
+
 def get_cli_args(
     dataset: str = "slimpajama_627b",
     tokenizer: str = "neox",
     cluster: Optional[str] = None,
-    config_file: str = 'base_norm.toml',
-    config_base_path: str = '/opt/titan-oellm/titan_oellm/configs',
+    config_file: str = 'qwen3_custom.toml',
+    base_path: str = '/opt/titan-oellm',
     validate: bool = True,
     user: Optional[str] = None,
 ) -> str:
     """
     Generate CLI arguments string for training script.
 
+    This function resolves the config file path automatically by searching
+    model train_configs directories first, then falling back to configs/.
+
     Args:
         dataset: Dataset name (default: 'slimpajama_627b')
         tokenizer: Tokenizer name (default: 'neox')
         cluster: Cluster name (auto-detected if None)
-        config_file: Config filename for validation (default: 'base_norm.toml')
-        config_base_path: Base path to config directory (default: '/opt/titan-oellm/titan_oellm/configs')
+        config_file: Config filename (default: 'qwen3_custom.toml')
+        base_path: Base path to titan-oellm installation (default: '/opt/titan-oellm')
         validate: Whether to validate paths before returning (default: True)
         user: Username for config lookup (defaults to TITAN_USER env var, then 'joerg')
 
     Returns:
-        str: Space-separated CLI arguments for training script
+        str: Space-separated CLI arguments for training script, including --job.config_file
 
     Raises:
         RuntimeError: If validation fails (when validate=True)
 
     Example:
-        >>> args = get_cli_args('slimpajama_627b', 'neox', 'juwels', 'base_norm.toml')
-        >>> # Returns: "--model.tokenizer_path=... --data.data_prefix=... ..."
+        >>> args = get_cli_args('slimpajama_627b', 'neox', 'juwels', 'qwen3_custom.toml')
+        >>> # Returns: "--job.config_file=/opt/titan-oellm/titan_oellm/models/qwen3_custom/train_configs/qwen3_custom.toml --model.tokenizer_path=... ..."
     """
+    # Resolve config file path
+    resolved_config = resolve_config_path(config_file, base_path)
+
     # Validate paths if requested
     if validate:
         if cluster is None:
             cluster = detect_cluster()
 
-        valid, messages = validate_paths(dataset, tokenizer, cluster, config_file, config_base_path, user=user)
+        valid, messages = validate_paths(dataset, tokenizer, cluster, config_file, base_path, user=user)
 
         # Print all messages (errors and warnings)
         for msg in messages:
@@ -330,12 +387,13 @@ def get_cli_args(
     # Get benchmark paths (validation handled by get_benchmark_paths)
     benchmark_paths = get_benchmark_paths(tokenizer, cluster, user=user, validate=validate)
 
-    return _format_cli_args(paths, benchmark_paths)
+    return _format_cli_args(resolved_config, paths, benchmark_paths)
 
 
-def _format_cli_args(paths: dict, benchmark_paths: dict) -> str:
-    """Format resolved paths into CLI args string."""
+def _format_cli_args(config_path: str, paths: dict, benchmark_paths: dict) -> str:
+    """Format resolved config and paths into CLI args string."""
     return (
+        f"--job.config_file={config_path} "
         f"--model.tokenizer_path={paths['tokenizer_path']} "
         f"--data.data_prefix={paths['data_prefix']} "
         f"--data.chunks_dir={paths['chunks_dir']} "
@@ -353,7 +411,7 @@ def validate_paths(
     tokenizer: str,
     cluster: str,
     config_file: str,
-    config_base_path: str = "/opt/titan-oellm/titan_oellm/configs",
+    base_path: str = "/opt/titan-oellm",
     user: Optional[str] = None
 ) -> tuple[bool, list[str]]:
     """
@@ -363,8 +421,8 @@ def validate_paths(
         dataset: Dataset name (e.g., 'slimpajama_627b')
         tokenizer: Tokenizer name (e.g., 'neox')
         cluster: Cluster name (e.g., 'juwels')
-        config_file: Config filename (e.g., 'base_norm.toml')
-        config_base_path: Base path to config directory
+        config_file: Config filename (e.g., 'qwen3_custom.toml')
+        base_path: Base path to titan-oellm installation (default: '/opt/titan-oellm')
         user: Username for config lookup (defaults to TITAN_USER env var, then 'joerg')
 
     Returns:
@@ -373,7 +431,7 @@ def validate_paths(
             - messages: List of error or warning messages
 
     Example:
-        >>> valid, errors = validate_paths('slimpajama_627b', 'neox', 'juwels', 'base_norm.toml')
+        >>> valid, errors = validate_paths('slimpajama_627b', 'neox', 'juwels', 'qwen3_custom.toml')
         >>> if not valid:
         ...     for error in errors:
         ...         print(error)
@@ -383,8 +441,9 @@ def validate_paths(
     messages = []
     all_valid = True
 
-    # Check config file exists
-    config_path = Path(config_base_path) / config_file
+    # Resolve and check config file exists
+    resolved_config = resolve_config_path(config_file, base_path)
+    config_path = Path(resolved_config)
     if not config_path.exists():
         messages.append(f"Error: Config file not found: {config_path}")
         all_valid = False
@@ -689,13 +748,13 @@ if __name__ == "__main__":
             print(f"Error: {e}")
             sys.exit(1)
     elif len(sys.argv) > 1 and sys.argv[1] == "validate":
-        # Usage: python cluster_config.py validate <dataset> <tokenizer> <cluster> <config_file> [config_base_path]
+        # Usage: python cluster_config.py validate <dataset> <tokenizer> <cluster> <config_file> [base_path]
         if len(sys.argv) < 6:
             print(
-                "Usage: python cluster_config.py validate <dataset> <tokenizer> <cluster> <config_file> [config_base_path]"
+                "Usage: python cluster_config.py validate <dataset> <tokenizer> <cluster> <config_file> [base_path]"
             )
             print(
-                "Example: python cluster_config.py validate slimpajama_627b neox juwels base_norm.toml /opt/titan-oellm/titan_oellm/configs"
+                "Example: python cluster_config.py validate slimpajama_627b neox juwels qwen3_custom.toml /opt/titan-oellm"
             )
             sys.exit(1)
 
@@ -703,9 +762,9 @@ if __name__ == "__main__":
         tokenizer = sys.argv[3]
         cluster = sys.argv[4]
         config_file = sys.argv[5]
-        config_base_path = sys.argv[6] if len(sys.argv) > 6 else "/opt/titan-oellm/titan_oellm/configs"
+        base_path = sys.argv[6] if len(sys.argv) > 6 else "/opt/titan-oellm"
 
-        valid, messages = validate_paths(dataset, tokenizer, cluster, config_file, config_base_path)
+        valid, messages = validate_paths(dataset, tokenizer, cluster, config_file, base_path)
         for msg in messages:
             print(msg)
         sys.exit(0 if valid else 1)
@@ -723,11 +782,11 @@ if __name__ == "__main__":
         print("Usage:")
         print("  python cluster_config.py list")
         print("  python cluster_config.py detect")
-        print("  python cluster_config.py validate <dataset> <tokenizer> <cluster> <config_file> [config_base_path]")
+        print("  python cluster_config.py validate <dataset> <tokenizer> <cluster> <config_file> [base_path]")
         print("  python cluster_config.py <dataset> <tokenizer> [cluster]")
         print()
         print("Examples:")
         print("  python cluster_config.py list")
         print("  python cluster_config.py slimpajama_627b neox")
         print("  python cluster_config.py slimpajama_627b neox juwels")
-        print("  python cluster_config.py validate slimpajama_627b neox juwels base_norm.toml")
+        print("  python cluster_config.py validate slimpajama_627b neox juwels qwen3_custom.toml")

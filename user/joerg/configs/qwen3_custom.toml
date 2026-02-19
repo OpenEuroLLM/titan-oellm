@@ -4,6 +4,7 @@
 
 [job]
 experiment_folder = "torchtitan"
+custom_config_module = "titan_oellm.configs.sci_job_config"
 
 [model]
 name = "qwen3_custom"
@@ -153,4 +154,4 @@ default_add_bos = true
 default_add_eos = false
 
 [experimental]
-custom_import = "titan_sci.models"
+custom_import = "titan_oellm.models"

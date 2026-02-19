@@ -39,16 +39,7 @@ export NCCL_IB_TIMEOUT=100
 export NCCL_IB_RETRY_CNT=20
 export NCCL_ALGO=Ring
 
-# Additional NCCL robustness settings for multi-node
-export NCCL_ASYNC_ERROR_HANDLING=1
-export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
-
 export HF_ALLOW_CODE_EVAL="1"
-
-export NCCL_SOCKET_IFNAME=eno4
-
-# Torchrun rendezvous timeout (seconds) - increase for large node counts
-export TORCH_DISTRIBUTED_TIMEOUT=1800
 
 
 export MASTER_ADDR="$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)"
@@ -57,9 +48,8 @@ export MASTER_ADDR="$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
 # Use job ID to generate a unique port in range 20000-30000
 export MASTER_PORT=$((20000 + (SLURM_JOB_ID % 10000)))
 export NUM_NODES=$SLURM_JOB_NUM_NODES
-
+export GPUS_PER_NODE=4
 export NUM_GPUS_PER_NODE=4
-export SLURM_CPUS_PER_TASK=14
 export NUM_GPUS=$((NUM_GPUS_PER_NODE*SLURM_NNODES))
 
 
@@ -82,35 +72,31 @@ echo "INFO: number of SLURM_JOB_NODELIST: $SLURM_JOB_NODELIST"
 echo "INFO: SLURM_PROCID  $SLURM_PROCID"
 
 
-
 # Dataset and Tokenizer configuration - set via environment or use defaults
-export if [ -z "$TITAN_USER" ]; then
-    echo "Error: TITAN_USER environment variable not set."
-    echo "Set it before running: export TITAN_USER=your_username"
-    exit 1
-fi
-export TITAN_USER     # Username for user-specific configs (user/{joerg,korbi})
+export TITAN_USER="${TITAN_USER:-joerg}"     # Username for user-specific configs (user/{joerg,korbi})
 CLUSTER="${CLUSTER:-capella}"            # Cluster name (juwels, jupiter, capella)
 DATASET="${DATASET:-slimpajama_627b}"    # Dataset name from cluster_paths.toml
 TOKENIZER="${TOKENIZER:-neox}"           # Tokenizer name from cluster_paths.toml
-CONFIG="${CONFIG:-base_plus.toml}"       # Base config file (base_norm.toml or base_plus.toml)
+CONFIG="${CONFIG:-base_norm.toml}"       # Base config file (base_norm.toml or base_plus.toml)
 
-# Project and container configuration
-PROJECT_DIR=$(pwd)                       # Assume script is run from project root
-CONTAINER="titan_juwels_0.2.0.sif"       # Container filename (needs to be build on different system)
+# Container configuration (used on compute nodes)
+PROJECT_DIR=$(pwd)
+CONTAINER="titan_capella_0.2.1.sif"      # Container filename
 
 # ============================================================================
-# LOAD CLUSTER CONFIGURATION
+# LOAD CLUSTER CONFIGURATION (using venv on login node)
 # ============================================================================
 # Load cluster-specific cache directories and paths from user-specific
 # cluster_paths.toml via cluster_config.py
-#
-# This runs inside the container where torchtitan is available
+# This now runs in the venv on the login node
+
 echo "Loading cluster configuration for user '$TITAN_USER' on cluster '$CLUSTER'..."
 
-# Load all cluster configuration as environment variables (run in container)
+# Load cluster configuration using container with writable cache paths
 eval "$(singularity exec \
     --env TITAN_USER=$TITAN_USER \
+    --env TORCHINDUCTOR_CACHE_DIR=/tmp/torch_cache \
+    --env TORCH_HOME=/tmp/torch_home \
     --bind $PROJECT_DIR:/opt/titan-oellm \
     $PROJECT_DIR/$CONTAINER \
     python3 -c "
@@ -120,6 +106,7 @@ from titan_oellm.cluster_config import get_env_exports
 try:
     print(get_env_exports('$CLUSTER'))
 except Exception as e:
+    import sys
     print(f'echo \"Error loading cluster config: {e}\"', file=sys.stderr)
     sys.exit(1)
 ")"
@@ -137,10 +124,21 @@ echo "  CONTAINER: $CONTAINER"
 echo "  Cache base: $(dirname $TRITON_CACHE_DIR)"
 
 # Create cache directories if they don't exist
-mkdir -p "$TRITON_CACHE_DIR"
-mkdir -p "$HF_DATASETS_CACHE"
-mkdir -p "$TORCH_HOME"
-mkdir -p "$DATA_DIR"
+echo "Creating cache directories..."
+mkdir -p "$TRITON_CACHE_DIR" || echo "WARNING: Failed to create TRITON_CACHE_DIR: $TRITON_CACHE_DIR"
+mkdir -p "$HF_DATASETS_CACHE" || echo "WARNING: Failed to create HF_DATASETS_CACHE: $HF_DATASETS_CACHE"
+mkdir -p "$TORCH_HOME" || echo "WARNING: Failed to create TORCH_HOME: $TORCH_HOME"
+mkdir -p "$DATA_DIR" || echo "WARNING: Failed to create DATA_DIR: $DATA_DIR"
+
+# Verify directories exist and are writable
+echo "Verifying cache directories:"
+ls -ld "$TRITON_CACHE_DIR" 2>&1 || echo "ERROR: TRITON_CACHE_DIR does not exist: $TRITON_CACHE_DIR"
+ls -ld "$HF_DATASETS_CACHE" 2>&1 || echo "ERROR: HF_DATASETS_CACHE does not exist: $HF_DATASETS_CACHE"
+ls -ld "$TORCH_HOME" 2>&1 || echo "ERROR: TORCH_HOME does not exist: $TORCH_HOME"
+ls -ld "$DATA_DIR" 2>&1 || echo "ERROR: DATA_DIR does not exist: $DATA_DIR"
+
+# Test write access
+touch "$TRITON_CACHE_DIR/.test_write" 2>&1 && rm "$TRITON_CACHE_DIR/.test_write" || echo "ERROR: TRITON_CACHE_DIR not writable: $TRITON_CACHE_DIR"
 
 ml GCC/13.3.0
 ml Python/3.12.3
@@ -150,17 +148,40 @@ ml CUDA/12
 SRUN_ARGS="
     --nodes=$SLURM_NNODES \
     --gres=gpu:$NUM_GPUS_PER_NODE \
-    --cpus-per-task=$SLURM_CPUS_PER_TASK \
     --kill-on-bad-exit=1 \
     --label \
     --jobid $SLURM_JOBID"
 
 
+
+# Debug: Show cache environment variables
+echo "Cache environment variables:"
+echo "  TRITON_CACHE_DIR=$TRITON_CACHE_DIR"
+echo "  TORCHINDUCTOR_CACHE_DIR=$TORCHINDUCTOR_CACHE_DIR"
+echo "  TORCH_HOME=$TORCH_HOME"
+echo "  HF_DATASETS_CACHE=$HF_DATASETS_CACHE"
+
 APPTAINER="singularity exec --nv \
+--writable-tmpfs \
     --pwd /opt/titan-oellm \
     --env TITAN_USER=$TITAN_USER \
+    --env MASTER_ADDR=$MASTER_ADDR \
+    --env MASTER_PORT=$MASTER_PORT \
+    --env NCCL_ALGO=$NCCL_ALGO \
+    --env NCCL_TIMEOUT=$NCCL_TIMEOUT \
+    --env NCCL_IB_TIMEOUT=$NCCL_IB_TIMEOUT \
+    --env NCCL_IB_RETRY_CNT=$NCCL_IB_RETRY_CNT \
+    --env NCCL_SOCKET_IFNAME=ibp \
+    --env GLOO_SOCKET_IFNAME=ibp \
     --env TORCH_HOME=$TORCH_HOME \
     --env CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES \
+    --env TRITON_CACHE_DIR=$TRITON_CACHE_DIR \
+    --env TORCHINDUCTOR_CACHE_DIR=$TORCHINDUCTOR_CACHE_DIR \
+    --env TORCHINDUCTOR_FX_GRAPH_CACHE=$TORCHINDUCTOR_FX_GRAPH_CACHE \
+    --env TORCHINDUCTOR_AUTOGRAD_CACHE=$TORCHINDUCTOR_AUTOGRAD_CACHE \
+    --env TORCH_INDUCTOR_CUDAGRAPH_DISABLE=$TORCH_INDUCTOR_CUDAGRAPH_DISABLE \
+    --env PYTORCH_CUDA_ALLOC_CONF=$PYTORCH_CUDA_ALLOC_CONF \
+    --env PYTHONPATH=/opt/titan-oellm/torchtitan \
     --bind $DATA_DIR:$DATA_DIR \
     --bind $PROJECT_DIR:/opt/titan-oellm \
     --bind $TRITON_CACHE_DIR:$TRITON_CACHE_DIR \
@@ -169,11 +190,15 @@ APPTAINER="singularity exec --nv \
     $PROJECT_DIR/$CONTAINER"
 
 
-# Generate cluster-specific path arguments (with automatic validation)
-# Note: Runs in container on master node before distributing to compute nodes
-echo "Validating configuration and paths..."
+
+# Generate cluster-specific path arguments (validation skipped - paths checked at runtime)
+# Note: Data paths may not be accessible yet, so validation is deferred
+echo "Generating cluster arguments..."
+
 CLUSTER_ARGS=$(singularity exec \
     --env TITAN_USER=$TITAN_USER \
+    --env TORCHINDUCTOR_CACHE_DIR=/tmp/torch_cache \
+    --env TORCH_HOME=/tmp/torch_home \
     --bind $PROJECT_DIR:/opt/titan-oellm \
     --bind $DATA_DIR:$DATA_DIR \
     $PROJECT_DIR/$CONTAINER \
@@ -181,15 +206,15 @@ CLUSTER_ARGS=$(singularity exec \
 import sys
 sys.path.insert(0, '/opt/titan-oellm')
 from titan_oellm.cluster_config import get_cli_args
-print(get_cli_args('$DATASET', '$TOKENIZER', '$CLUSTER', '$CONFIG', '/opt/titan-oellm/titan_oellm/configs'))
+print(get_cli_args('$DATASET', '$TOKENIZER', '$CLUSTER', '$CONFIG', validate=False))
 ")
 
-# Check if validation failed
+# Check if command succeeded
 if [ $? -ne 0 ]; then
-    echo "Configuration validation failed. Aborting."
+    echo "Failed to generate cluster arguments. Aborting."
     exit 1
 fi
-echo "Validation passed."
+echo "Cluster arguments generated successfully."
 
 LAUNCHER="torchrun \
     --nnodes $SLURM_NNODES \
@@ -197,14 +222,7 @@ LAUNCHER="torchrun \
     --node_rank $SLURM_PROCID \
     --max_restarts 3 \
     --rdzv_backend c10d \
-    --rdzv_endpoint $MASTER_ADDR:$MASTER_PORT \
-    --rdzv_conf timeout=1800,read_timeout=900"
-
+    --rdzv_endpoint $MASTER_ADDR:$MASTER_PORT"
 
 srun $SRUN_ARGS $APPTAINER bash -c '
-    # Create rank-specific cache to avoid compilation race conditions
-    RANK_TRITON_CACHE="${TRITON_CACHE_DIR}/rank_${SLURM_PROCID}"
-    mkdir -p "${RANK_TRITON_CACHE}"
-    export TRITON_CACHE_DIR="${RANK_TRITON_CACHE}"
-    export TORCHINDUCTOR_CACHE_DIR="${RANK_TRITON_CACHE}"
-    exec '"$LAUNCHER -m torchtitan.train --job.config_file=/opt/titan-oellm/titan_oellm/configs/$CONFIG $CLUSTER_ARGS $@"
+    exec '"$LAUNCHER -m torchtitan.train $CLUSTER_ARGS $@"

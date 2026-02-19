@@ -158,7 +158,7 @@ CLUSTER_ARGS=$(apptainer exec \
 import sys
 sys.path.insert(0, '/opt/titan-oellm')
 from titan_oellm.cluster_config import get_cli_args
-print(get_cli_args('$DATASET', '$TOKENIZER', '$CLUSTER', '$CONFIG', '/opt/titan-oellm/titan_oellm/configs'))
+print(get_cli_args('$DATASET', '$TOKENIZER', '$CLUSTER', '$CONFIG'))
 ")
 
 # Check if validation failed
@@ -190,7 +190,7 @@ for (( i=0; i<$SLURM_NNODES; i++ )); do
 
     srun $SRUN_ARGS $APPTAINER bash -c "
         cd /opt/titan-oellm
-        exec $LAUNCHER -m torchtitan.train --job.config_file=/opt/titan-oellm/titan_oellm/configs/$CONFIG $CLUSTER_ARGS \"\$@\"" &
+        exec $LAUNCHER -m torchtitan.train $CLUSTER_ARGS \"\$@\"" &
 
     if [ $i -eq 0 ]; then
         sleep 10

@@ -165,7 +165,7 @@ if [[ "$LOCAL_MODE" == true ]]; then
     NPROC="${NPROC:-1}"
     CONFIG="${CONFIG:-user/$TITAN_USER/configs/debug.toml}"
     CONTAINER=$(find_container "$CLUSTER")
-    
+
     # Test if container runtime works (fails on some login nodes like Capella)
     if ! test_container_runtime "$CONTAINER"; then
         cat >&2 << EOF
@@ -188,14 +188,6 @@ EOF
         exit 1
     fi
 
-    # Format config file path for container
-    # If CONFIG is just a filename (no /), prepend titan_oellm/configs/
-    if [[ "$CONFIG" != */* ]]; then
-        CONFIG_ARG="--job.config_file=/opt/titan-oellm/titan_oellm/configs/$CONFIG"
-    else
-        CONFIG_ARG="--job.config_file=/opt/titan-oellm/$CONFIG"
-    fi
-    
     echo "=== Local Training: cluster=$CLUSTER dataset=$DATASET tokenizer=$TOKENIZER gpus=$NPROC ==="
     
     # Load environment from cluster config
@@ -206,7 +198,8 @@ EOF
     OUTPUT_DIR=$(run_python "$CONTAINER" "from titan_oellm.cluster_config import get_cluster_config; config = get_cluster_config('$CLUSTER', '$TITAN_USER'); print(config['output_dir'])")
 
     # Get dataset/tokenizer CLI args (skip validation since paths may not be accessible from login node)
-    CLUSTER_ARGS=$(run_python "$CONTAINER" "from titan_oellm.cluster_config import get_cli_args; print(get_cli_args('$DATASET', '$TOKENIZER', '$CLUSTER', validate=False))")
+    # get_cli_args now includes --job.config_file with resolved path
+    CLUSTER_ARGS=$(run_python "$CONTAINER" "from titan_oellm.cluster_config import get_cli_args; print(get_cli_args('$DATASET', '$TOKENIZER', '$CLUSTER', '$CONFIG', validate=False))")
     
     # Create directories
     mkdir -p "$TRITON_CACHE_DIR" "$HF_DATASETS_CACHE" "$TORCH_HOME" "$OUTPUT_DIR"
@@ -267,7 +260,7 @@ EOF
         "$CONTAINER"
         torchrun --nproc_per_node="$NPROC" --nnodes=1 --node_rank=0
                  --master_addr=localhost --master_port=29500
-        -m torchtitan.train "$CONFIG_ARG" $CLUSTER_ARGS "${ARGS[@]}"
+        -m torchtitan.train $CLUSTER_ARGS "${ARGS[@]}"
     )
     
     echo "Command: ${CMD[*]}"
