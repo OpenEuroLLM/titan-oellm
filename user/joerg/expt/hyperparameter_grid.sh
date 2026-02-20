@@ -38,14 +38,15 @@ for lr in "${LRS[@]}"; do
                 runtime_min=$(( ((runtime_min + 29) / 30) * 30 + 30 ))  # round up to 30min + 30min buffer
                 TIME=$(printf "%d:%02d:00" $((runtime_min / 60)) $((runtime_min % 60)))
 
-                ARGS="--model.flavor=$MODEL --job.dump_folder=scale_token_budget_125M/$name \
-                --metrics.save_tb_folder=tb \
-                --optimizer.lr=$lr --optimizer.beta1=$b1 --optimizer.beta2=$b2 \
-                --training.local_batch_size=$LBS --training.seq_len=$SEQ --training.steps=$steps \
-                --validation.enable=true --validation.freq=1000 --checkpoint.enable=true --checkpoint.interval=5000 \
-                --parameter_logging.enabled --parameter_logging.log_interval=500 \
-                --parameter_logging.log_parameters --parameter_logging.log_gradients \
-                --parameter_logging.log_optimizer_states"
+                ARGS="--model.flavor=$MODEL --job.dump_folder=scale_token_budget_125M/$name"
+                ARGS+=" --metrics.save_tb_folder=tb"
+                ARGS+=" --optimizer.lr=$lr --optimizer.beta1=$b1 --optimizer.beta2=$b2"
+                ARGS+=" --training.local_batch_size=$LBS --training.seq_len=$SEQ --training.steps=$steps"
+                ARGS+=" --validation.enable=true --validation.freq=1000"
+                ARGS+=" --checkpoint.enable=true --checkpoint.interval=5000"
+                ARGS+=" --parameter_logging.enabled --parameter_logging.log_interval=500"
+                ARGS+=" --parameter_logging.log_parameters --parameter_logging.log_gradients"
+                ARGS+=" --parameter_logging.log_optimizer_states"
 
                 TITAN_USER=$TITAN_USER DATASET=$DATASET TOKENIZER=$TOKENIZER CLUSTER=$CLUSTER CONFIG=$CONFIG \
                 bash submit_job.sh --nodes=$n --time=$TIME -- $ARGS && sleep 1

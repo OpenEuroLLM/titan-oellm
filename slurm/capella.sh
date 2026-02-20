@@ -91,6 +91,8 @@ CONTAINER="titan_capella_0.2.1.sif"      # Container filename
 # This now runs in the venv on the login node
 
 echo "Loading cluster configuration for user '$TITAN_USER' on cluster '$CLUSTER'..."
+echo "DEBUG: Positional arguments (\$@): $@"
+echo "DEBUG: Number of arguments: $#"
 
 # Load cluster configuration using container with writable cache paths
 eval "$(singularity exec \
@@ -223,6 +225,10 @@ LAUNCHER="torchrun \
     --max_restarts 3 \
     --rdzv_backend c10d \
     --rdzv_endpoint $MASTER_ADDR:$MASTER_PORT"
+
+echo "DEBUG: CLUSTER_ARGS=$CLUSTER_ARGS"
+echo "DEBUG: Additional args (\$@)=$@"
+echo "DEBUG: Full command: $LAUNCHER -m torchtitan.train $CLUSTER_ARGS $@"
 
 srun $SRUN_ARGS $APPTAINER bash -c '
     exec '"$LAUNCHER -m torchtitan.train $CLUSTER_ARGS $@"
