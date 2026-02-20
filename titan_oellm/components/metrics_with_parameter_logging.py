@@ -59,13 +59,13 @@ class EnhancedMetricsProcessor(MetricsProcessor):
         # Initialize base metrics processor (this may call property setters)
         super().__init__(job_config, parallel_dims, tag)
 
-        # Override TensorBoard logger to use experiment_folder with OUTPUT_DIR
+        # Override TensorBoard logger to use dump_folder with OUTPUT_DIR
         if job_config.metrics.enable_tensorboard and hasattr(self.logger, '_loggers'):
             from datetime import datetime
             from torchtitan.components.metrics import TensorBoardLogger
             from torchtitan.tools.logging import logger
 
-            # Build TensorBoard path using experiment_folder and OUTPUT_DIR
+            # Build TensorBoard path using dump_folder and OUTPUT_DIR
             experiment_dir = self._resolve_experiment_dir(job_config)
             tb_dir = os.path.join(
                 experiment_dir,
@@ -117,19 +117,14 @@ class EnhancedMetricsProcessor(MetricsProcessor):
 
     @staticmethod
     def _resolve_experiment_dir(job_config: JobConfig):
-        """Resolve experiment folder relative to OUTPUT_DIR when available."""
-        from torchtitan.tools.logging import logger
-
-        folder = getattr(job_config.job, "experiment_folder", None)
-        if folder is None:
-            folder = getattr(job_config.job, "dump_folder", None)
+        """Resolve dump_folder, prefixed with OUTPUT_DIR when available."""
+        folder = job_config.job.dump_folder or "./outputs"
 
         output_root = os.environ.get("OUTPUT_DIR")
-        if output_root:
-            return os.path.expandvars(os.path.join(output_root, folder or "experiment"))
+        if output_root and not folder.startswith("/") and not folder.startswith("./"):
+            return os.path.expandvars(os.path.join(output_root, folder))
 
-        logger.warning("OUTPUT_DIR not set; using experiment_folder as provided")
-        return os.path.expandvars(folder or "./outputs/experiment")
+        return os.path.expandvars(folder)
 
     def _save_config_to_toml(self, job_config: JobConfig) -> None:
         """Save job config to TOML file in resolved experiment folder (rank 0 only)."""

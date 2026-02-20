@@ -3,7 +3,7 @@
 # Use with: python train.py --job.config_file=configs/qwen3_custom.toml <cluster-specific-args>
 
 [job]
-experiment_folder = "torchtitan"
+dump_folder = "torchtitan"
 custom_config_module = "titan_oellm.configs.sci_job_config"
 
 [model]
@@ -103,7 +103,7 @@ early_stop = false
 # Memory budget for mode="memory_budget": 0.0 = max memory savings, 1.0 = max speed
 memory_budget = 0.5
 
-# Visualize memory/speed tradeoff pareto curve (generates SVG in $OUTPUT_DIR/<experiment_folder>/memory_budget_pareto/)
+# Visualize memory/speed tradeoff pareto curve (generates SVG in $OUTPUT_DIR/<dump_folder>/memory_budget_pareto/)
 visualize_memory_budget_pareto = false
 
 [quantize.linear.float8]

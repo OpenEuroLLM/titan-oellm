@@ -2,7 +2,7 @@
 # This is a unified config for all clusters - paths are injected via cluster_config.py
 
 [job]
-experiment_folder = "qwen3_custom"
+dump_folder = "qwen3_custom"
 custom_config_module = "titan_oellm.configs.sci_job_config"
 
 [model]
@@ -101,7 +101,7 @@ early_stop = false
 # Memory budget for mode="memory_budget": 0.0 = max memory savings, 1.0 = max speed
 memory_budget = 0.5
 
-# Visualize memory/speed tradeoff pareto curve (generates SVG in $OUTPUT_DIR/<experiment_folder>/memory_budget_pareto/)
+# Visualize memory/speed tradeoff pareto curve (generates SVG in $OUTPUT_DIR/<dump_folder>/memory_budget_pareto/)
 visualize_memory_budget_pareto = false
 
 [quantize.linear.float8]

@@ -10,7 +10,7 @@
 
 [job]
 description = "Local debug run"
-experiment_folder = "experiments/local_test"
+dump_folder = "experiments/local_test"
 custom_config_module = "titan_oellm.configs.sci_job_config"
 
 [model]

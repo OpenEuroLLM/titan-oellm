@@ -21,10 +21,7 @@ from torchtitan.tools.logging import logger
 
 @dataclass
 class Job(BaseJob):
-    """Extended Job config with experiment_folder field."""
-
-    experiment_folder: str = ""
-    """Experiment folder name (created under output_dir)"""
+    """Extended Job config."""
 
     continue_training: bool = False
     """Resume from latest checkpoint in dump_folder if available."""
