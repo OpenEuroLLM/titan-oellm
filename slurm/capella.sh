@@ -120,17 +120,32 @@ if [ -z "$TRITON_CACHE_DIR" ]; then
     exit 1
 fi
 
+# Get OUTPUT_DIR from cluster config
+OUTPUT_DIR=$(singularity exec \
+    --env TITAN_USER=$TITAN_USER \
+    --bind $PROJECT_DIR:/opt/titan-oellm \
+    $PROJECT_DIR/$CONTAINER \
+    python3 -c "
+import sys
+sys.path.insert(0, '/opt/titan-oellm')
+from titan_oellm.cluster_config import get_cluster_config
+print(get_cluster_config('$CLUSTER')['output_dir'])
+")
+export OUTPUT_DIR
+
 echo "Configuration loaded successfully:"
 echo "  PROJECT_DIR: $PROJECT_DIR"
 echo "  CONTAINER: $CONTAINER"
+echo "  OUTPUT_DIR: $OUTPUT_DIR"
 echo "  Cache base: $(dirname $TRITON_CACHE_DIR)"
 
-# Create cache directories if they don't exist
-echo "Creating cache directories..."
+# Create cache and output directories if they don't exist
+echo "Creating directories..."
 mkdir -p "$TRITON_CACHE_DIR" || echo "WARNING: Failed to create TRITON_CACHE_DIR: $TRITON_CACHE_DIR"
 mkdir -p "$HF_DATASETS_CACHE" || echo "WARNING: Failed to create HF_DATASETS_CACHE: $HF_DATASETS_CACHE"
 mkdir -p "$TORCH_HOME" || echo "WARNING: Failed to create TORCH_HOME: $TORCH_HOME"
 mkdir -p "$DATA_DIR" || echo "WARNING: Failed to create DATA_DIR: $DATA_DIR"
+mkdir -p "$OUTPUT_DIR" || echo "WARNING: Failed to create OUTPUT_DIR: $OUTPUT_DIR"
 
 # Verify directories exist and are writable
 echo "Verifying cache directories:"
@@ -184,7 +199,9 @@ APPTAINER="singularity exec --nv \
     --env TORCH_INDUCTOR_CUDAGRAPH_DISABLE=$TORCH_INDUCTOR_CUDAGRAPH_DISABLE \
     --env PYTORCH_CUDA_ALLOC_CONF=$PYTORCH_CUDA_ALLOC_CONF \
     --env PYTHONPATH=/opt/titan-oellm/torchtitan \
+    --env OUTPUT_DIR=$OUTPUT_DIR \
     --bind $DATA_DIR:$DATA_DIR \
+    --bind $OUTPUT_DIR:$OUTPUT_DIR \
     --bind $PROJECT_DIR:/opt/titan-oellm \
     --bind $TRITON_CACHE_DIR:$TRITON_CACHE_DIR \
     --bind $HF_DATASETS_CACHE:$HF_DATASETS_CACHE \
