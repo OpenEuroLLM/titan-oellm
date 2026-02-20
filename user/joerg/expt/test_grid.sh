@@ -18,7 +18,7 @@ MODEL=125M
 
 # Grid
 LRS=(0.001)
-NODES=(2)
+NODES=(1 2)
 BUDGETS_B=(5)  # in billions
 BETAS=("0.9,0.95")
 
@@ -32,7 +32,7 @@ for lr in "${LRS[@]}"; do
                 steps=$((budget / gbs))
                 name="lr${lr}_n${n}_${bb}B_b${b1}${b2}"
 
-                ARGS="--model.flavor=$MODEL --job.experiment_folder=outputs/scale_token_budget_125M/$name \
+                ARGS="--model.flavor=$MODEL --job.dump_folder=scale_token_budget_125M/$name \
                 --metrics.save_tb_folder=tb \
                 --optimizer.lr=$lr --optimizer.beta1=$b1 --optimizer.beta2=$b2 \
                 --training.local_batch_size=$LBS --training.seq_len=$SEQ --training.steps=$steps \
