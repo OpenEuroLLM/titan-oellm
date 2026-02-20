@@ -163,10 +163,7 @@ def get_benchmark_paths(
             - wikitext2_path: Path prefix for WikiText-2 (without .bin/.idx)
             - wikitext103_path: Path prefix for WikiText-103
             - lambada_path: Path prefix for LAMBADA
-
-    Raises:
-        ValueError: If benchmarks not found for tokenizer/cluster
-        FileNotFoundError: If validate=True and benchmark files don't exist
+            Returns empty paths if benchmarks not configured for tokenizer/cluster.
     """
     if cluster is None:
         cluster = detect_cluster()
@@ -176,13 +173,19 @@ def get_benchmark_paths(
     # Lookup benchmark base path
     benchmark_key = f"benchmarks.{tokenizer}.{cluster}"
     if benchmark_key not in config:
-        available = [k for k in config.keys() if k.startswith(f"benchmarks.{tokenizer}.")]
-        available_clusters = [k.split(".")[-1] for k in available]
-        raise ValueError(
-            f"Benchmarks for tokenizer '{tokenizer}' not found for cluster '{cluster}'.\n"
-            f"Available clusters for this tokenizer: {', '.join(available_clusters) or 'none'}\n"
-            f"Available benchmark configurations: {', '.join(_extract_names('benchmarks', config))}"
-        )
+        # Benchmarks not configured for this tokenizer/cluster - return empty paths
+        # This is not an error; benchmarks are optional
+        if validate:
+            print(
+                f"Note: Benchmarks not configured for tokenizer '{tokenizer}' on cluster '{cluster}'. "
+                f"Benchmarks will be skipped.",
+                file=sys.stderr
+            )
+        return {
+            "wikitext2_path": "",
+            "wikitext103_path": "",
+            "lambada_path": "",
+        }
 
     base_path = config[benchmark_key]["path"]
 
