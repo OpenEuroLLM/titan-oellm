@@ -8,18 +8,18 @@ CLUSTER=capella
 DATASET=nemotron_cc
 TOKENIZER=nemotron
 CONFIG=qwen3_custom.toml
-TIME=8:00:00
 
 # Fixed training params
 LBS=32
 GPUS=4
 SEQ=4096
 MODEL=125M
+TPS_PER_GPU=150000
 
 # Grid
 LRS=(0.001 0.002 0.0046)
 NODES=(1 2 4)
-BUDGETS_B=(5 10 20 40 80 160)  # in billions
+BUDGETS_B=(5 10 20 40)  # in billions
 BETAS=("0.9,0.95" "0.9,0.99" "0.95,0.99")
 
 for lr in "${LRS[@]}"; do
@@ -31,6 +31,12 @@ for lr in "${LRS[@]}"; do
                 gbs=$((LBS * GPUS * n * SEQ))
                 steps=$((budget / gbs))
                 name="lr${lr}_n${n}_${bb}B_b${b1}${b2}"
+
+                # Calculate runtime: budget / (TPS_PER_GPU * total_gpus), round up to 30min + 30min buffer
+                total_tps=$((TPS_PER_GPU * GPUS * n))
+                runtime_min=$(( (budget / total_tps + 59) / 60 ))  # seconds to minutes, round up
+                runtime_min=$(( ((runtime_min + 29) / 30) * 30 + 30 ))  # round up to 30min + 30min buffer
+                TIME=$(printf "%d:%02d:00" $((runtime_min / 60)) $((runtime_min % 60)))
 
                 ARGS="--model.flavor=$MODEL --job.dump_folder=scale_token_budget_125M/$name \
                 --metrics.save_tb_folder=tb \
