@@ -18,7 +18,7 @@ MODEL=125M
 
 # Grid
 LRS=(0.001)
-NODES=(1 2)
+NODES=(2)
 BUDGETS_B=(5)  # in billions
 BETAS=("0.9,0.95")
 
@@ -32,17 +32,34 @@ for lr in "${LRS[@]}"; do
                 steps=$((budget / gbs))
                 name="lr${lr}_n${n}_${bb}B_b${b1}${b2}"
 
-                ARGS="--model.flavor=$MODEL --job.dump_folder=scale_token_budget_125M/$name"
-                ARGS+=" --metrics.save_tb_folder=tb"
-                ARGS+=" --optimizer.lr=$lr --optimizer.beta1=$b1 --optimizer.beta2=$b2"
-                ARGS+=" --training.local_batch_size=$LBS --training.seq_len=$SEQ --training.steps=$steps"
-                ARGS+=" --validation.enable=true --validation.freq=1000"
-                ARGS+=" --checkpoint.enable=true --checkpoint.interval=5000"
-                ARGS+=" --parameter_logging.enabled --parameter_logging.log_interval=500"
-                ARGS+=" --parameter_logging.log_parameters --parameter_logging.log_gradients"
-                ARGS+=" --parameter_logging.log_optimizer_states"
-
-                TITAN_USER=$TITAN_USER DATASET=$DATASET TOKENIZER=$TOKENIZER CLUSTER=$CLUSTER CONFIG=$CONFIG \
-                bash submit_job.sh --nodes=$n --time=$TIME -- $ARGS && sleep 1
+                # Format arguments like the working juwels script
+                TITAN_USER=$TITAN_USER \
+                DATASET=$DATASET \
+                TOKENIZER=$TOKENIZER \
+                CLUSTER=$CLUSTER \
+                CONFIG=$CONFIG \
+                bash submit_job.sh \
+                --nodes=$n \
+                --time=$TIME \
+                -- \
+                --model.flavor=$MODEL \
+                --job.dump_folder=scale_token_budget_125M/${name}/n${n}_lr_${lr} \
+                --metrics.save_tb_folder=tb \
+                --optimizer.lr=$lr \
+                --optimizer.beta1=$b1 \
+                --optimizer.beta2=$b2 \
+                --training.local_batch_size=$LBS \
+                --training.seq_len=$SEQ \
+                --training.steps=$steps \
+                --validation.enable \
+                --validation.freq=1000 \
+                --checkpoint.enable \
+                --checkpoint.interval=5000 \
+                --parameter_logging.enabled \
+                --parameter_logging.log_interval=500 \
+                --parameter_logging.log-parameters \
+                --parameter_logging.log-gradients \
+                --parameter_logging.log-optimizer-states \
+                && sleep 1
 
 done; done; done; done
