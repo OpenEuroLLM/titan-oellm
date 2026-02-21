@@ -43,7 +43,7 @@ for lr in "${LRS[@]}"; do
                 --time=$TIME \
                 -- \
                 --model.flavor=$MODEL \
-                --job.dump_folder=scale_token_budget_125M/${name}/n${n}_lr_${lr} \
+                --job.dump_folder=./outputs/scale_token_budget_125M/${name}/n${n}_lr_${lr} \
                 --metrics.save_tb_folder=tb \
                 --optimizer.lr=$lr \
                 --optimizer.beta1=$b1 \
