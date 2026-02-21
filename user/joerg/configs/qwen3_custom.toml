@@ -3,7 +3,6 @@
 # Use with: python train.py --job.config_file=configs/qwen3_custom.toml <cluster-specific-args>
 
 [job]
-dump_folder = "torchtitan"
 custom_config_module = "titan_oellm.configs.sci_job_config"
 
 [model]

@@ -2,7 +2,6 @@
 # This is a unified config for all clusters - paths are injected via cluster_config.py
 
 [job]
-dump_folder = "qwen3_custom"
 custom_config_module = "titan_oellm.configs.sci_job_config"
 
 [model]

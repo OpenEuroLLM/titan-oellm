@@ -429,6 +429,21 @@ def apply_output_dir_prefix(job_config: "JobConfig") -> None:
     - Otherwise (implicit relative like "path/..."), prefix with OUTPUT_DIR
     """
     try:
+        import sys
+
+        # CRITICAL FIX: Check if CLI is overriding dump_folder
+        # If --job.dump_folder is in CLI args and starts with "./", skip prefixing
+        # This handles the case where TOML has "qwen3_custom" but CLI has "./outputs/..."
+        for arg in sys.argv[1:]:
+            if arg.startswith("--job.dump_folder=") or arg.startswith("--job.dump-folder="):
+                cli_value = arg.split("=", 1)[1]
+                if cli_value.startswith("./") or cli_value.startswith("/"):
+                    logger.debug(
+                        "Skipping OUTPUT_DIR prefix due to CLI override: %s",
+                        cli_value,
+                    )
+                    return
+
         output_dir = os.environ.get("OUTPUT_DIR", "").strip()
         if not output_dir:
             return
