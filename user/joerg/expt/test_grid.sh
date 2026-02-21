@@ -11,7 +11,8 @@ CONFIG=qwen3_custom.toml
 TIME=0:15:00
 
 # Fixed training params
-LBS=32
+LBS=16  # Reduced from 32 to fit in memory
+GRAD_ACCUM=2  # Gradient accumulation to maintain effective batch size
 GPUS=4
 SEQ=4096
 MODEL=125M
@@ -28,7 +29,7 @@ for lr in "${LRS[@]}"; do
             for bp in "${BETAS[@]}"; do
                 b1=${bp%,*}; b2=${bp#*,}
                 budget=$((bb * 1000000000))
-                gbs=$((LBS * GPUS * n * SEQ))
+                gbs=$((LBS * GRAD_ACCUM * GPUS * n * SEQ))
                 steps=$((budget / gbs))
                 name="lr${lr}_n${n}_${bb}B_b${b1}${b2}"
 
@@ -49,6 +50,7 @@ for lr in "${LRS[@]}"; do
                 --optimizer.beta1=$b1 \
                 --optimizer.beta2=$b2 \
                 --training.local_batch_size=$LBS \
+                --training.gradient_accumulation_steps=$GRAD_ACCUM \
                 --training.seq_len=$SEQ \
                 --training.steps=$steps \
                 --validation.enable \
