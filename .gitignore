@@ -231,3 +231,6 @@ output/
 # Slurm output files
 mpi-out.*
 mpi-err.*
+
+# venv
+.venv*

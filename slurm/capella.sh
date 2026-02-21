@@ -263,7 +263,7 @@ LAUNCHER="torchrun \
 
 echo "DEBUG: CLUSTER_ARGS=$CLUSTER_ARGS"
 echo "DEBUG: Additional args (\$@)=$@"
-echo "DEBUG: Full command: $LAUNCHER -m torchtitan.train $CLUSTER_ARGS $@"
+echo "DEBUG: Full command: $LAUNCHER -m titan_train $CLUSTER_ARGS $@"
 
 srun $SRUN_ARGS $APPTAINER bash -c '
-    exec '"$LAUNCHER -m torchtitan.train $CLUSTER_ARGS $@"
+    exec '"$LAUNCHER -m titan_train $CLUSTER_ARGS $@"
