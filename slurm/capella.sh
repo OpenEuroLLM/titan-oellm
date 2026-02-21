@@ -123,15 +123,29 @@ fi
 # Get OUTPUT_DIR from cluster config
 OUTPUT_DIR=$(singularity exec \
     --env TITAN_USER=$TITAN_USER \
+    --env TORCHINDUCTOR_CACHE_DIR=/tmp/torch_cache \
+    --env TORCH_HOME=/tmp/torch_home \
     --bind $PROJECT_DIR:/opt/titan-oellm \
     $PROJECT_DIR/$CONTAINER \
     python3 -c "
 import sys
 sys.path.insert(0, '/opt/titan-oellm')
 from titan_oellm.cluster_config import get_cluster_config
-print(get_cluster_config('$CLUSTER')['output_dir'])
+try:
+    config = get_cluster_config('$CLUSTER')
+    print(config['output_dir'])
+except Exception as e:
+    print(f'echo \"ERROR: Failed to get OUTPUT_DIR: {e}\"', file=sys.stderr)
+    sys.exit(1)
 ")
 export OUTPUT_DIR
+
+# Verify OUTPUT_DIR was set correctly
+if [ -z "$OUTPUT_DIR" ]; then
+    echo "ERROR: OUTPUT_DIR is empty. Failed to load from cluster configuration."
+    echo "Please check user/$TITAN_USER/cluster_paths.toml has [cluster.$CLUSTER] with output_dir set."
+    exit 1
+fi
 
 echo "Configuration loaded successfully:"
 echo "  PROJECT_DIR: $PROJECT_DIR"
