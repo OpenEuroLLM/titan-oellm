@@ -8,9 +8,11 @@ CLUSTER=capella
 DATASET=nemotron_cc
 TOKENIZER=nemotron
 CONFIG=qwen3_custom.toml
+TIME=0:15:00
 
 # Fixed training params
-LBS=32
+LBS=16  # Reduced from 32 to fit in memory
+GRAD_ACCUM=2  # Gradient accumulation to maintain effective batch size
 GPUS=4
 SEQ=4096
 MODEL=125M
@@ -28,27 +30,40 @@ for lr in "${LRS[@]}"; do
             for bp in "${BETAS[@]}"; do
                 b1=${bp%,*}; b2=${bp#*,}
                 budget=$((bb * 1000000000))
-                gbs=$((LBS * GPUS * n * SEQ))
+                global_batch_size=$((LBS * GRAD_ACCUM * GPUS * n))
+                gbs=$((global_batch_size * SEQ))
                 steps=$((budget / gbs))
                 name="lr${lr}_n${n}_${bb}B_b${b1}${b2}"
 
-                # Calculate runtime: budget / (TPS_PER_GPU * total_gpus), round up to 30min + 30min buffer
-                total_tps=$((TPS_PER_GPU * GPUS * n))
-                runtime_min=$(( (budget / total_tps + 59) / 60 ))  # seconds to minutes, round up
-                runtime_min=$(( ((runtime_min + 29) / 30) * 30 + 30 ))  # round up to 30min + 30min buffer
-                TIME=$(printf "%d:%02d:00" $((runtime_min / 60)) $((runtime_min % 60)))
-
-                ARGS="--model.flavor=$MODEL --job.dump_folder=scale_token_budget_125M/$name"
-                ARGS+=" --metrics.save_tb_folder=tb"
-                ARGS+=" --optimizer.lr=$lr --optimizer.beta1=$b1 --optimizer.beta2=$b2"
-                ARGS+=" --training.local_batch_size=$LBS --training.seq_len=$SEQ --training.steps=$steps"
-                ARGS+=" --validation.enable=true --validation.freq=1000"
-                ARGS+=" --checkpoint.enable=true --checkpoint.interval=5000"
-                ARGS+=" --parameter_logging.enabled --parameter_logging.log_interval=500"
-                ARGS+=" --parameter_logging.log_parameters --parameter_logging.log_gradients"
-                ARGS+=" --parameter_logging.log_optimizer_states"
-
-                TITAN_USER=$TITAN_USER DATASET=$DATASET TOKENIZER=$TOKENIZER CLUSTER=$CLUSTER CONFIG=$CONFIG \
-                bash submit_job.sh --nodes=$n --time=$TIME -- $ARGS && sleep 1
+                # Format arguments like the working juwels script
+                TITAN_USER=$TITAN_USER \
+                DATASET=$DATASET \
+                TOKENIZER=$TOKENIZER \
+                CLUSTER=$CLUSTER \
+                CONFIG=$CONFIG \
+                bash submit_job.sh \
+                --nodes=$n \
+                --time=$TIME \
+                -- \
+                --model.flavor=$MODEL \
+                --job.dump_folder=./outputs/scale_token_budget_125M/${name}/n${n}_lr_${lr} \
+                --metrics.save_tb_folder=tb \
+                --optimizer.lr=$lr \
+                --optimizer.beta1=$b1 \
+                --optimizer.beta2=$b2 \
+                --training.local_batch_size=$LBS \
+                --training.global_batch_size=$global_batch_size \
+                --training.seq_len=$SEQ \
+                --training.steps=$steps \
+                --validation.enable \
+                --validation.freq=1000 \
+                --checkpoint.enable \
+                --checkpoint.interval=5000 \
+                --parameter_logging.enabled \
+                --parameter_logging.log_interval=500 \
+                --parameter_logging.log-parameters \
+                --parameter_logging.log-gradients \
+                --parameter_logging.log-optimizer-states \
+                && sleep 1
 
 done; done; done; done

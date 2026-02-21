@@ -29,7 +29,8 @@ for lr in "${LRS[@]}"; do
             for bp in "${BETAS[@]}"; do
                 b1=${bp%,*}; b2=${bp#*,}
                 budget=$((bb * 1000000000))
-                gbs=$((LBS * GRAD_ACCUM * GPUS * n * SEQ))
+                global_batch_size=$((LBS * GRAD_ACCUM * GPUS * n))
+                gbs=$((global_batch_size * SEQ))
                 steps=$((budget / gbs))
                 name="lr${lr}_n${n}_${bb}B_b${b1}${b2}"
 
@@ -50,7 +51,7 @@ for lr in "${LRS[@]}"; do
                 --optimizer.beta1=$b1 \
                 --optimizer.beta2=$b2 \
                 --training.local_batch_size=$LBS \
-                --training.gradient_accumulation_steps=$GRAD_ACCUM \
+                --training.global_batch_size=$global_batch_size \
                 --training.seq_len=$SEQ \
                 --training.steps=$steps \
                 --validation.enable \
