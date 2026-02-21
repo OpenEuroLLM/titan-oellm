@@ -26,6 +26,14 @@ def _apply_config_manager_patch():
 
     def _patched_parse_args(self, args: list[str] = sys.argv[1:]):
         """Fixed parse_args that filters --job.config_file before tyro.cli."""
+        import logging
+        logger = logging.getLogger(__name__)
+
+        # DEBUG: Log what args we received
+        logger.warning(f"[TITAN_TRAIN_DEBUG] sys.argv has {len(sys.argv)} elements")
+        logger.warning(f"[TITAN_TRAIN_DEBUG] args parameter has {len(args)} elements")
+        logger.warning(f"[TITAN_TRAIN_DEBUG] First 10 args: {args[:10]}")
+
         toml_values = self._maybe_load_toml(args)
         config_cls = self._maybe_add_custom_config(args, toml_values)
 
