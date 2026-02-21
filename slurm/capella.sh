@@ -265,5 +265,6 @@ echo "DEBUG: CLUSTER_ARGS=$CLUSTER_ARGS"
 echo "DEBUG: Additional args (\$@)=$@"
 echo "DEBUG: Full command: $LAUNCHER -m titan_train $CLUSTER_ARGS $@"
 
-srun $SRUN_ARGS $APPTAINER bash -c '
-    exec '"$LAUNCHER -m titan_train $CLUSTER_ARGS $@"
+# Build the full command with all arguments properly quoted
+FULL_CMD="$LAUNCHER -m titan_train $CLUSTER_ARGS $@"
+srun $SRUN_ARGS $APPTAINER bash -c "exec $FULL_CMD"
