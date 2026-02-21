@@ -39,12 +39,24 @@ def _apply_config_manager_patch():
         # This allows CLI args to properly override TOML values
         filtered_args = _filter_config_file_arg(args)
 
+        # DEBUG: Log what args we're passing to tyro
+        import logging
+        logger = logging.getLogger(__name__)
+        dump_folder_args = [a for a in filtered_args if "dump_folder" in a or "dump-folder" in a]
+        logger.warning(f"[TITAN_TRAIN_DEBUG] Original args count: {len(args)}")
+        logger.warning(f"[TITAN_TRAIN_DEBUG] Filtered args count: {len(filtered_args)}")
+        logger.warning(f"[TITAN_TRAIN_DEBUG] dump_folder args in filtered_args: {dump_folder_args}")
+        logger.warning(f"[TITAN_TRAIN_DEBUG] base_config.job.dump_folder BEFORE tyro.cli: '{base_config.job.dump_folder}'")
+
         import tyro
         from torchtitan.config.manager import custom_registry
 
         self.config = tyro.cli(
             config_cls, args=filtered_args, default=base_config, registry=custom_registry
         )
+
+        # DEBUG: Log what we got after tyro.cli
+        logger.warning(f"[TITAN_TRAIN_DEBUG] config.job.dump_folder AFTER tyro.cli: '{self.config.job.dump_folder}'")
 
         self._validate_config()
         return self.config
