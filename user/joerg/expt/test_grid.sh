@@ -5,8 +5,8 @@ set -euo pipefail
 # Config
 export TITAN_USER=joerg
 CLUSTER=capella
-DATASET=nemotron_cc
-TOKENIZER=nemotron
+DATASET=slimpajama_627b
+TOKENIZER=neox
 CONFIG=qwen3_custom.toml
 TIME=0:15:00
 
