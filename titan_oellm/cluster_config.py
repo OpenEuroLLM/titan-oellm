@@ -381,7 +381,10 @@ def get_cli_args(
 
 
 def _format_cli_args(paths: dict, benchmark_paths: dict, config_path: str = "") -> str:
-    """Format resolved paths into CLI args string."""
+    """Format resolved paths into CLI args string.
+
+    Skips empty values to avoid confusing tyro's argument parser.
+    """
     parts = []
     if config_path:
         parts.append(f"--job.config_file={config_path}")
@@ -391,9 +394,15 @@ def _format_cli_args(paths: dict, benchmark_paths: dict, config_path: str = "") 
     parts.append(f"--data.dataloader={paths['dataloader']}")
     parts.append(f"--data.min_doc_len={paths['min_doc_len']}")
     parts.append(f"--validation.data_prefix={paths['validation_prefix']}")
-    parts.append(f"--benchmarks.wikitext2_path={benchmark_paths['wikitext2_path']}")
-    parts.append(f"--benchmarks.wikitext103_path={benchmark_paths['wikitext103_path']}")
-    parts.append(f"--benchmarks.lambada_path={benchmark_paths['lambada_path']}")
+
+    # Only add benchmark paths if they're not empty (avoids tyro parsing issues)
+    if benchmark_paths.get('wikitext2_path'):
+        parts.append(f"--benchmarks.wikitext2_path={benchmark_paths['wikitext2_path']}")
+    if benchmark_paths.get('wikitext103_path'):
+        parts.append(f"--benchmarks.wikitext103_path={benchmark_paths['wikitext103_path']}")
+    if benchmark_paths.get('lambada_path'):
+        parts.append(f"--benchmarks.lambada_path={benchmark_paths['lambada_path']}")
+
     return " ".join(parts)
 
 
