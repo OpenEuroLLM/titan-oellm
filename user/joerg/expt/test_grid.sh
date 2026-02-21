@@ -18,7 +18,7 @@ MODEL=125M
 
 # Grid
 LRS=(0.001)
-NODES=(1)  # Start with 1 node to test, then try 2
+NODES=(2)  # Start with 1 node to test, then try 2
 BUDGETS_B=(5)  # in billions
 BETAS=("0.9,0.95")
 
