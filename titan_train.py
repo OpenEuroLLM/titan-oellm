@@ -35,6 +35,14 @@ def _apply_config_manager_patch():
             else config_cls()
         )
 
+        # CRITICAL FIX: Reset dump_folder to original TOML value
+        # __post_init__ already ran and prefixed it, but we need the original
+        # value so tyro can properly detect CLI overrides. When tyro creates
+        # the final config with CLI args, __post_init__ will run again and
+        # see the CLI value (starting with "./") and skip prefixing.
+        if toml_values and "job" in toml_values and "dump_folder" in toml_values["job"]:
+            base_config.job.dump_folder = toml_values["job"]["dump_folder"]
+
         # Filter out --job.config_file from args before passing to tyro
         # This allows CLI args to properly override TOML values
         filtered_args = _filter_config_file_arg(args)
