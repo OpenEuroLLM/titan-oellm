@@ -7,7 +7,7 @@ From: nvcr.io/nvidia/pytorch:26.01-py3
 
 %files
     setup.py /opt/titan-oellm/
-    titan_sci /opt/titan-oellm/
+    titan_oellm /opt/titan-oellm/
     torchtitan /opt/titan-oellm/
 
 %environment
