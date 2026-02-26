@@ -15,8 +15,15 @@
 # ============================================================================
 # Configure paths for each HPC cluster you use
 
+# Local development/testing configuration
+["cluster.local"]
+output_dir = "<YOUR_HOME>/workspace/titan-oellm/experiments/local_test"
+cache_base = "<YOUR_HOME>/workspace/data/cache"
+hf_datasets_cache = "<YOUR_HOME>/workspace/data/cache/hf"
+hf_home = "<YOUR_HOME>/workspace/data/huggingface/cache"
+
 ["cluster.juwels"]
-output_dir = "/p/scratch/<YOUR_PROJECT>/<YOUR_USER_ID>/experiments/slurm"
+output_dir = "/p/scratch/<YOUR_PROJECT>/<YOUR_USER_ID>/experiments"
 cache_base = "/p/scratch/<YOUR_PROJECT>/<YOUR_USER_ID>/cache"
 hf_datasets_cache = "/p/project1/<YOUR_PROJECT>/<YOUR_USER_ID>/data/cache/"
 hf_home = "/p/project1/<YOUR_PROJECT>/<YOUR_USER_ID>/model/cache/"
@@ -32,6 +39,9 @@ data_dir = "/data/cat/ws/<YOUR_USER_ID>-titan/data"
 # ============================================================================
 # Add paths to your tokenizers for each cluster
 
+["tokenizer.neox.local"]
+path = "<YOUR_HOME>/workspace/data/huggingface/tokenizer/neox"
+
 ["tokenizer.neox.juwels"]
 path = "/p/project1/<YOUR_PROJECT>/<YOUR_USER_ID>/data/tokenizer/neox"
 
@@ -44,6 +54,13 @@ path = "/data/cat/ws/<YOUR_USER_ID>-titan/data/tokenizer/neox"
 
 # ============================================================================
 # DATASETS
+# Local test dataset (small subset for testing)
+["dataset.test_dataset.neox.local"]
+train_prefix = "<YOUR_HOME>/workspace/data/datasets/test/train"
+validation_prefix = "<YOUR_HOME>/workspace/data/datasets/test/validation"
+dataloader = "MMapDataset"
+min_doc_len = 128
+
 # ============================================================================
 # Add your datasets for each cluster
 
@@ -61,7 +78,10 @@ train_chunks = "/data/cat/ws/<YOUR_USER_ID>-titan/data/SlimPajama-627B/train/chu
 validation_prefix = "/data/cat/ws/<YOUR_USER_ID>-titan/data/SlimPajama-627B/validation/merged"
 dataloader = "ChunkedMMapDataset"
 min_doc_len = 128
+local"]
+path = "<YOUR_HOME>/workspace/data/benchmarks/neox"
 
+["benchmarks.neox.
 # ============================================================================
 # BENCHMARKS
 # ============================================================================

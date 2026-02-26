@@ -6,6 +6,8 @@ __pycache__/
 # C extensions
 *.so
 
+.idea/*
+
 # Distribution / packaging
 .Python
 build/
@@ -226,3 +228,7 @@ __marimo__/
 # Slurm output files
 mpi-out.*
 mpi-err.*
+
+.idea
+.venv*
+events*

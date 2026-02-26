@@ -59,6 +59,27 @@ class EnhancedMetricsProcessor(MetricsProcessor):
         # Initialize base metrics processor (this may call property setters)
         super().__init__(job_config, parallel_dims, tag)
 
+        # Override TensorBoard logger to use dump_folder with OUTPUT_DIR
+        if job_config.metrics.enable_tensorboard and hasattr(self.logger, '_loggers'):
+            from datetime import datetime
+            from torchtitan.components.metrics import TensorBoardLogger
+            from torchtitan.tools.logging import logger
+
+            # Build TensorBoard path using dump_folder and OUTPUT_DIR
+            experiment_dir = self._resolve_experiment_dir(job_config)
+            tb_dir = os.path.join(
+                experiment_dir,
+                job_config.metrics.save_tb_folder,
+                datetime.now().strftime("%Y%m%d-%H%M")
+            )
+
+            # Find and replace the TensorBoard logger in the container
+            for i, log in enumerate(self.logger._loggers):
+                if isinstance(log, TensorBoardLogger):
+                    self.logger._loggers[i] = TensorBoardLogger(tb_dir, tag)
+                    logger.info(f"TensorBoard logging redirected to experiment folder: {tb_dir}")
+                    break
+
         # Log initialization status
         from torchtitan.tools.logging import logger
         if param_logging_enabled:
@@ -94,8 +115,19 @@ class EnhancedMetricsProcessor(MetricsProcessor):
         else:
             return obj
 
+    @staticmethod
+    def _resolve_experiment_dir(job_config: JobConfig):
+        """Resolve dump_folder, prefixed with OUTPUT_DIR when available."""
+        folder = job_config.job.dump_folder or "./outputs"
+
+        output_root = os.environ.get("OUTPUT_DIR")
+        if output_root and not folder.startswith("/") and not folder.startswith("./"):
+            return os.path.expandvars(os.path.join(output_root, folder))
+
+        return os.path.expandvars(folder)
+
     def _save_config_to_toml(self, job_config: JobConfig) -> None:
-        """Save job config to TOML file in dump_folder (rank 0 only)."""
+        """Save job config to TOML file in resolved experiment folder (rank 0 only)."""
         import torch.distributed as dist
         from torchtitan.tools.logging import logger
 
@@ -107,9 +139,9 @@ class EnhancedMetricsProcessor(MetricsProcessor):
             logger.warning("tomli_w not available, config saving disabled")
             return
 
-        dump_folder = job_config.job.dump_folder
-        os.makedirs(dump_folder, exist_ok=True)
-        config_path = os.path.join(dump_folder, "config.toml")
+        experiment_dir = self._resolve_experiment_dir(job_config)
+        os.makedirs(experiment_dir, exist_ok=True)
+        config_path = os.path.join(experiment_dir, "config.toml")
 
         try:
             # Filter None values before saving (TOML doesn't support None)

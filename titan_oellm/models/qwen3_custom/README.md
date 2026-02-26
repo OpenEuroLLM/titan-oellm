@@ -209,10 +209,11 @@ lr = 1e-4  # Higher LR than fine-tuning
 weight_decay = 0.1
 
 [lr_scheduler]
-scheduler_type = "universal_ou"
+scheduler_type = "universal"
 warm_steps = 2000
 main_decay_type = "cosine"
 main_decay_ratio = 0.1
+cooldown_steps = 1000
 ```
 
 ## Architecture Modifications
@@ -262,18 +263,18 @@ Supports multiple scheduler types via the `[lr_scheduler]` section:
 
 ```toml
 [lr_scheduler]
-scheduler_type = "universal_ou"  # "wsd", "cosine", "ou", "universal_ou", etc.
+scheduler_type = "universal"
 warm_steps = 1000
 main_decay_type = "cosine"
 main_decay_ratio = 0.1
 lr_min_absolute = 1e-5
+cooldown_steps = 500
 ```
 
 Available scheduler types:
 - `"wsd"`: Warmup-Stable-Decay (torchtitan default)
 - `"cosine"`: Cosine annealing with warmup
-- `"ou"`: Ornstein-Uhlenbeck stochastic scheduler
-- `"universal_ou"`: Universal scheduler (can emulate all others)
+- `"universal"`: 3-phase scheduler (warm -> main -> cooldown) with flexible control
 
 ### Validation
 
@@ -314,9 +315,7 @@ python torchtitan/scripts/download_hf_assets.py \
 # 2. Create config (configs/finetune_qwen3_0.6B.toml)
 cat > configs/finetune_qwen3_0.6B.toml << 'EOF'
 [job]
-dump_folder = "./outputs/finetune_qwen3_0.6B"
-description = "Fine-tuning Qwen3 0.6B"
-custom_config_module = "titan_oellm.configs.sci_job_config"
+dump_folder = "train_qwen3_0.6B"  # Resolved under $OUTPUT_DIR
 
 [model]
 name = "qwen3_custom"

@@ -22,6 +22,7 @@ Usage:
 
 import os
 import socket
+import sys
 import tomli
 from pathlib import Path
 from typing import Optional
@@ -29,33 +30,38 @@ from typing import Optional
 
 def detect_cluster() -> str:
     """
-    Auto-detect cluster from hostname.
+    Auto-detect cluster from hostname or CLUSTER environment variable.
 
     Returns:
-        str: Cluster name ('juwels', 'jupiter', or 'capella')
+        str: Cluster name ('local', 'juwels', 'jupiter', or 'capella')
 
     Raises:
-        ValueError: If hostname doesn't match any known cluster
+        ValueError: If hostname doesn't match any known cluster and CLUSTER env var not set
     """
     hostname = socket.gethostname().lower()
 
     # JUWELS cluster detection
-    if 'jwlogin' in hostname or 'jwc' in hostname or 'juwels' in hostname:
-        return 'juwels'
+    if "jwlogin" in hostname or "jwc" in hostname or "juwels" in hostname:
+        return "juwels"
 
     # Jupiter cluster detection
-    elif 'jupiter' in hostname or 'jrc' in hostname:
-        return 'jupiter'
+    elif "jupiter" in hostname or "jrc" in hostname:
+        return "jupiter"
 
-    # Capella cluster detection
-    elif 'capella' in hostname:
-        return 'capella'
+    # Capella cluster detection (hostname is c1, c2, etc.)
+    elif hostname.startswith("c") and len(hostname) >= 2 and hostname[1].isdigit():
+        return "capella"
+    elif "capella" in hostname:
+        return "capella"
+
+    elif "leonardo" in hostname:
+        return "leonardo"
 
     else:
         raise ValueError(
             f"Unknown cluster for hostname: {hostname}\n"
             f"Expected hostname to contain: jwlogin/jwc/juwels (JUWELS), "
-            f"jupiter/jrc (Jupiter), or capella (Capella)"
+            f"jupiter/jrc (Jupiter), capella (Capella) or leonardo"
         )
 
 
@@ -90,11 +96,10 @@ def load_cluster_paths(user: Optional[str] = None) -> dict:
     if not config_path.exists():
         old_config_path = Path(__file__).parent / "configs" / "cluster_paths.toml"
         if old_config_path.exists():
-            import sys
             print(
                 f"Warning: Using deprecated config location: {old_config_path}\n"
                 f"Please move cluster_paths.toml to: {config_path}",
-                file=sys.stderr
+                file=sys.stderr,
             )
             config_path = old_config_path
         else:
@@ -107,11 +112,7 @@ def load_cluster_paths(user: Optional[str] = None) -> dict:
         return tomli.load(f)
 
 
-def get_tokenizer_path(
-    tokenizer: str,
-    cluster: Optional[str] = None,
-    user: Optional[str] = None
-) -> str:
+def get_tokenizer_path(tokenizer: str, cluster: Optional[str] = None, user: Optional[str] = None) -> str:
     """
     Get tokenizer path for specified cluster.
 
@@ -135,7 +136,7 @@ def get_tokenizer_path(
     tokenizer_key = f"tokenizer.{tokenizer}.{cluster}"
     if tokenizer_key not in config:
         available = [k for k in config.keys() if k.startswith(f"tokenizer.{tokenizer}.")]
-        available_clusters = [k.split('.')[-1] for k in available]
+        available_clusters = [k.split(".")[-1] for k in available]
         raise ValueError(
             f"Tokenizer '{tokenizer}' not found for cluster '{cluster}'.\n"
             f"Available clusters for this tokenizer: {', '.join(available_clusters) or 'none'}\n"
@@ -146,10 +147,7 @@ def get_tokenizer_path(
 
 
 def get_benchmark_paths(
-    tokenizer: str,
-    cluster: Optional[str] = None,
-    user: Optional[str] = None,
-    validate: bool = True
+    tokenizer: str, cluster: Optional[str] = None, user: Optional[str] = None, validate: bool = True
 ) -> dict:
     """
     Get benchmark paths for specified tokenizer and cluster.
@@ -165,10 +163,7 @@ def get_benchmark_paths(
             - wikitext2_path: Path prefix for WikiText-2 (without .bin/.idx)
             - wikitext103_path: Path prefix for WikiText-103
             - lambada_path: Path prefix for LAMBADA
-
-    Raises:
-        ValueError: If benchmarks not found for tokenizer/cluster
-        FileNotFoundError: If validate=True and benchmark files don't exist
+            Returns empty paths if benchmarks not configured for tokenizer/cluster.
     """
     if cluster is None:
         cluster = detect_cluster()
@@ -178,53 +173,51 @@ def get_benchmark_paths(
     # Lookup benchmark base path
     benchmark_key = f"benchmarks.{tokenizer}.{cluster}"
     if benchmark_key not in config:
-        available = [k for k in config.keys() if k.startswith(f"benchmarks.{tokenizer}.")]
-        available_clusters = [k.split('.')[-1] for k in available]
-        raise ValueError(
-            f"Benchmarks for tokenizer '{tokenizer}' not found for cluster '{cluster}'.\n"
-            f"Available clusters for this tokenizer: {', '.join(available_clusters) or 'none'}\n"
-            f"Available benchmark configurations: {', '.join(_extract_names('benchmarks', config))}"
-        )
+        # Benchmarks not configured for this tokenizer/cluster - return empty paths
+        # This is not an error; benchmarks are optional
+        if validate:
+            print(
+                f"Note: Benchmarks not configured for tokenizer '{tokenizer}' on cluster '{cluster}'. "
+                f"Benchmarks will be skipped.",
+                file=sys.stderr
+            )
+        return {
+            "wikitext2_path": "",
+            "wikitext103_path": "",
+            "lambada_path": "",
+        }
 
     base_path = config[benchmark_key]["path"]
 
     # Construct full paths for each benchmark
     # Structure: {base_path}/wikitext2/wikitext2.{bin,idx}
     paths = {
-        'wikitext2_path': f"{base_path}/wikitext2/wikitext2",
-        'wikitext103_path': f"{base_path}/wikitext103/wikitext103",
-        'lambada_path': f"{base_path}/lambada/lambada",
+        "wikitext2_path": f"{base_path}/wikitext2/wikitext2",
+        "wikitext103_path": f"{base_path}/wikitext103/wikitext103",
+        "lambada_path": f"{base_path}/lambada/lambada",
     }
 
-    # Validate that benchmark files exist
+    # Validate that benchmark files exist, use empty placeholder if missing
     if validate:
         missing = []
         for name, path_prefix in paths.items():
             bin_path = Path(f"{path_prefix}.bin")
             idx_path = Path(f"{path_prefix}.idx")
             if not bin_path.exists() or not idx_path.exists():
-                missing.append(f"  - {name}: {path_prefix}.{{bin,idx}}")
+                missing.append(name)
+                paths[name] = ""  # Use empty placeholder
 
         if missing:
-            raise FileNotFoundError(
-                f"Benchmark files not found for tokenizer '{tokenizer}' on cluster '{cluster}':\n"
-                + "\n".join(missing) + "\n\n"
-                f"Please run scripts/download_benchmarks.py to create them:\n"
-                f"  python scripts/download_benchmarks.py \\\n"
-                f"      --output-dir {base_path} \\\n"
-                f"      --tokenizer {tokenizer} \\\n"
-                f"      --cluster {cluster}"
+            print(
+                f"Warning: Benchmark files not found for {', '.join(missing)}. "
+                f"Benchmarks will be skipped. Run scripts/download_benchmarks.py to enable them.",
+                file=sys.stderr
             )
 
     return paths
 
 
-def get_paths(
-    dataset: str,
-    tokenizer: str,
-    cluster: Optional[str] = None,
-    user: Optional[str] = None
-) -> dict:
+def get_paths(dataset: str, tokenizer: str, cluster: Optional[str] = None, user: Optional[str] = None) -> dict:
     """
     Get resolved paths for dataset and tokenizer on specified cluster.
 
@@ -256,7 +249,7 @@ def get_paths(
     tokenizer_key = f"tokenizer.{tokenizer}.{cluster}"
     if tokenizer_key not in config:
         available = [k for k in config.keys() if k.startswith(f"tokenizer.{tokenizer}.")]
-        available_clusters = [k.split('.')[-1] for k in available]
+        available_clusters = [k.split(".")[-1] for k in available]
         raise ValueError(
             f"Tokenizer '{tokenizer}' not found for cluster '{cluster}'.\n"
             f"Available clusters for this tokenizer: {', '.join(available_clusters) or 'none'}\n"
@@ -269,7 +262,7 @@ def get_paths(
     dataset_key = f"dataset.{dataset}.{tokenizer}.{cluster}"
     if dataset_key not in config:
         available = [k for k in config.keys() if k.startswith(f"dataset.{dataset}.{tokenizer}.")]
-        available_clusters = [k.split('.')[-1] for k in available]
+        available_clusters = [k.split(".")[-1] for k in available]
         raise ValueError(
             f"Dataset '{dataset}' with tokenizer '{tokenizer}' not found for cluster '{cluster}'.\n"
             f"Available clusters for this dataset-tokenizer pair: {', '.join(available_clusters) or 'none'}\n"
@@ -278,56 +271,99 @@ def get_paths(
 
     dataset_config = config[dataset_key]
 
-    return {
-        'cluster': cluster,
-        'tokenizer_path': tokenizer_path,
-        'data_prefix': dataset_config['train_prefix'],
-        'chunks_dir': dataset_config['train_chunks'],
-        'validation_prefix': dataset_config['validation_prefix'],
-        'dataloader': dataset_config['dataloader'],
-        'min_doc_len': dataset_config['min_doc_len'],
+    cfg = {
+        "cluster": cluster,
+        "tokenizer_path": tokenizer_path,
+        "data_prefix": dataset_config["train_prefix"],
+        "chunks_dir": dataset_config["train_chunks"],
+        "validation_prefix": dataset_config["validation_prefix"],
+        "dataloader": dataset_config["dataloader"],
+        "min_doc_len": dataset_config["min_doc_len"],
     }
+    return cfg
+
+
+def resolve_config_path(config: str, project_root: str = "/opt/titan-oellm") -> str:
+    """
+    Resolve a config filename to its full path.
+
+    Searches titan_oellm/models/*/train_configs/ for the config file.
+    Falls back to titan_oellm/configs/ for backwards compatibility.
+    If config contains '/', treats it as a relative path from project_root.
+
+    Args:
+        config: Config filename (e.g., 'base_norm.toml') or relative path
+        project_root: Project root directory (default: '/opt/titan-oellm')
+
+    Returns:
+        str: Full path to config file
+
+    Raises:
+        FileNotFoundError: If config file cannot be found
+    """
+    if "/" in config:
+        return str(Path(project_root) / config)
+
+    # Search in model train_configs
+    models_dir = Path(project_root) / "titan_oellm" / "models"
+    for match in models_dir.glob(f"*/train_configs/{config}"):
+        return str(match)
+
+    # Fallback to old location (titan_oellm/configs/)
+    fallback = Path(project_root) / "titan_oellm" / "configs" / config
+    if fallback.exists():
+        return str(fallback)
+
+    raise FileNotFoundError(
+        f"Config file '{config}' not found in titan_oellm/models/*/train_configs/ "
+        f"or titan_oellm/configs/ under {project_root}"
+    )
 
 
 def get_cli_args(
-    dataset: str = 'slimpajama_627b',
-    tokenizer: str = 'neox',
+    dataset: str = "slimpajama_627b",
+    tokenizer: str = "neox",
     cluster: Optional[str] = None,
-    config_file: str = 'base_norm.toml',
-    config_base_path: str = '/opt/titan-sci/titan_oellm/configs',
+    config_file: str = "qwen3_custom.toml",
+    config_base_path: str = "/opt/titan-oellm/titan_oellm/configs",
     validate: bool = True,
-    user: Optional[str] = None
+    user: Optional[str] = None,
+    project_root: str = "/opt/titan-oellm",
 ) -> str:
     """
     Generate CLI arguments string for training script.
+
+    Includes --job.config_file with the resolved config path.
 
     Args:
         dataset: Dataset name (default: 'slimpajama_627b')
         tokenizer: Tokenizer name (default: 'neox')
         cluster: Cluster name (auto-detected if None)
-        config_file: Config filename for validation (default: 'base_norm.toml')
-        config_base_path: Base path to config directory (default: '/opt/titan-sci/titan_oellm/configs')
+        config_file: Config filename (default: 'qwen3_custom.toml')
+        config_base_path: Deprecated. Use project_root instead.
         validate: Whether to validate paths before returning (default: True)
         user: Username for config lookup (defaults to TITAN_USER env var, then 'joerg')
 
     Returns:
-        str: Space-separated CLI arguments for training script
+        str: Space-separated CLI arguments for training script, including --job.config_file
 
     Raises:
         RuntimeError: If validation fails (when validate=True)
 
     Example:
-        >>> args = get_cli_args('slimpajama_627b', 'neox', 'juwels', 'base_norm.toml')
-        >>> # Returns: "--model.tokenizer_path=... --data.data_prefix=... ..."
+        >>> args = get_cli_args('slimpajama_627b', 'neox', 'juwels', 'qwen3_custom.toml')
+        >>> # Returns: "--job.config_file=/opt/titan-oellm/titan_oellm/models/qwen3_custom/train_configs/qwen3_custom.toml --model.tokenizer_path=... ..."
     """
-    import sys
+    # Resolve config path
+    config_path = resolve_config_path(config_file, project_root)
 
     # Validate paths if requested
     if validate:
         if cluster is None:
             cluster = detect_cluster()
 
-        valid, messages = validate_paths(dataset, tokenizer, cluster, config_file, config_base_path, user=user)
+        valid, messages = validate_paths(dataset, tokenizer, cluster, config_file,
+                                         project_root=project_root, user=user)
 
         # Print all messages (errors and warnings)
         for msg in messages:
@@ -341,17 +377,33 @@ def get_cli_args(
     # Get benchmark paths (validation handled by get_benchmark_paths)
     benchmark_paths = get_benchmark_paths(tokenizer, cluster, user=user, validate=validate)
 
-    return (
-        f"--model.tokenizer_path={paths['tokenizer_path']} "
-        f"--data.data_prefix={paths['data_prefix']} "
-        f"--data.chunks_dir={paths['chunks_dir']} "
-        f"--data.dataloader={paths['dataloader']} "
-        f"--data.min_doc_len={paths['min_doc_len']} "
-        f"--validation.data_prefix={paths['validation_prefix']} "
-        f"--benchmarks.wikitext2_path={benchmark_paths['wikitext2_path']} "
-        f"--benchmarks.wikitext103_path={benchmark_paths['wikitext103_path']} "
-        f"--benchmarks.lambada_path={benchmark_paths['lambada_path']}"
-    )
+    return _format_cli_args(paths, benchmark_paths, config_path)
+
+
+def _format_cli_args(paths: dict, benchmark_paths: dict, config_path: str = "") -> str:
+    """Format resolved paths into CLI args string.
+
+    Skips empty values to avoid confusing tyro's argument parser.
+    """
+    parts = []
+    if config_path:
+        parts.append(f"--job.config_file={config_path}")
+    parts.append(f"--model.tokenizer_path={paths['tokenizer_path']}")
+    parts.append(f"--data.data_prefix={paths['data_prefix']}")
+    parts.append(f"--data.chunks_dir={paths['chunks_dir']}")
+    parts.append(f"--data.dataloader={paths['dataloader']}")
+    parts.append(f"--data.min_doc_len={paths['min_doc_len']}")
+    parts.append(f"--validation.data_prefix={paths['validation_prefix']}")
+
+    # Only add benchmark paths if they're not empty (avoids tyro parsing issues)
+    if benchmark_paths.get('wikitext2_path'):
+        parts.append(f"--benchmarks.wikitext2_path={benchmark_paths['wikitext2_path']}")
+    if benchmark_paths.get('wikitext103_path'):
+        parts.append(f"--benchmarks.wikitext103_path={benchmark_paths['wikitext103_path']}")
+    if benchmark_paths.get('lambada_path'):
+        parts.append(f"--benchmarks.lambada_path={benchmark_paths['lambada_path']}")
+
+    return " ".join(parts)
 
 
 def validate_paths(
@@ -359,8 +411,9 @@ def validate_paths(
     tokenizer: str,
     cluster: str,
     config_file: str,
-    config_base_path: str = "/opt/titan-sci/titan_oellm/configs",
-    user: Optional[str] = None
+    config_base_path: str = "/opt/titan-oellm/titan_oellm/configs",
+    user: Optional[str] = None,
+    project_root: str = "/opt/titan-oellm",
 ) -> tuple[bool, list[str]]:
     """
     Validate that all required paths exist and are not empty.
@@ -370,8 +423,9 @@ def validate_paths(
         tokenizer: Tokenizer name (e.g., 'neox')
         cluster: Cluster name (e.g., 'juwels')
         config_file: Config filename (e.g., 'base_norm.toml')
-        config_base_path: Base path to config directory
+        config_base_path: Deprecated. Use project_root instead.
         user: Username for config lookup (defaults to TITAN_USER env var, then 'joerg')
+        project_root: Project root directory (default: '/opt/titan-oellm')
 
     Returns:
         tuple[bool, list[str]]: (all_valid, messages)
@@ -389,8 +443,11 @@ def validate_paths(
     messages = []
     all_valid = True
 
-    # Check config file exists
-    config_path = Path(config_base_path) / config_file
+    # Resolve config file path (searches models/*/train_configs/ and configs/)
+    try:
+        config_path = Path(resolve_config_path(config_file, project_root))
+    except FileNotFoundError:
+        config_path = Path(config_base_path) / config_file  # fallback for error message
     if not config_path.exists():
         messages.append(f"Error: Config file not found: {config_path}")
         all_valid = False
@@ -406,7 +463,7 @@ def validate_paths(
         return False, messages
 
     # Check tokenizer directory exists and is not empty
-    tokenizer_path = Path(paths['tokenizer_path'])
+    tokenizer_path = Path(paths["tokenizer_path"])
     try:
         # Use .resolve(strict=True) to force exceptions on access issues
         resolved_path = tokenizer_path.resolve(strict=True)
@@ -429,7 +486,7 @@ def validate_paths(
         all_valid = False
 
     # Check training data prefix exists
-    data_prefix = paths['data_prefix']
+    data_prefix = paths["data_prefix"]
     # For mmap datasets, check if any files with the prefix exist
     data_prefix_path = Path(data_prefix)
     parent_dir = data_prefix_path.parent
@@ -454,8 +511,8 @@ def validate_paths(
         all_valid = False
 
     # Check chunks directory if using ChunkedMMapDataset
-    if paths['dataloader'] == 'ChunkedMMapDataset':
-        chunks_dir = Path(paths['chunks_dir'])
+    if paths["dataloader"] == "ChunkedMMapDataset":
+        chunks_dir = Path(paths["chunks_dir"])
         try:
             # Use .resolve(strict=True) to force exceptions on access issues
             resolved_chunks = chunks_dir.resolve(strict=True)
@@ -478,7 +535,7 @@ def validate_paths(
             all_valid = False
 
     # Check validation data prefix exists
-    validation_prefix = paths['validation_prefix']
+    validation_prefix = paths["validation_prefix"]
     validation_prefix_path = Path(validation_prefix)
     validation_parent = validation_prefix_path.parent
     validation_name = validation_prefix_path.name
@@ -517,14 +574,14 @@ def _extract_names(prefix: str, config: dict) -> list[str]:
     names = set()
     for key in config.keys():
         if key.startswith(f"{prefix}."):
-            parts = key.split('.')
-            if prefix == 'dataset' and len(parts) >= 3:
+            parts = key.split(".")
+            if prefix == "dataset" and len(parts) >= 3:
                 # Format: dataset.name.tokenizer.cluster -> return 'name.tokenizer'
                 names.add(f"{parts[1]}.{parts[2]}")
-            elif prefix == 'tokenizer' and len(parts) >= 2:
+            elif prefix == "tokenizer" and len(parts) >= 2:
                 # Format: tokenizer.name.cluster -> return 'name'
                 names.add(parts[1])
-            elif prefix == 'benchmarks' and len(parts) >= 3:
+            elif prefix == "benchmarks" and len(parts) >= 3:
                 # Format: benchmarks.tokenizer.cluster -> return 'tokenizer.cluster'
                 names.add(f"{parts[1]}.{parts[2]}")
     return sorted(names)
@@ -545,17 +602,17 @@ def list_available(user: Optional[str] = None) -> None:
     """
     config = load_cluster_paths(user=user)
 
-    datasets = _extract_names('dataset', config)
-    tokenizers = _extract_names('tokenizer', config)
+    datasets = _extract_names("dataset", config)
+    tokenizers = _extract_names("tokenizer", config)
 
     # Extract unique clusters
     clusters = set()
     for key in config.keys():
-        parts = key.split('.')
+        parts = key.split(".")
         # Handle both tokenizer.name.cluster (3 parts) and dataset.name.tokenizer.cluster (4 parts)
-        if len(parts) == 3 and key.startswith('tokenizer.'):
+        if len(parts) == 3 and key.startswith("tokenizer."):
             clusters.add(parts[2])
-        elif len(parts) == 4 and key.startswith('dataset.'):
+        elif len(parts) == 4 and key.startswith("dataset."):
             clusters.add(parts[3])
 
     print("Available configurations:")
@@ -564,10 +621,7 @@ def list_available(user: Optional[str] = None) -> None:
     print(f"  Tokenizers: {', '.join(tokenizers)}")
 
 
-def get_cluster_config(
-    cluster: Optional[str] = None,
-    user: Optional[str] = None
-) -> dict:
+def get_cluster_config(cluster: Optional[str] = None, user: Optional[str] = None) -> dict:
     """
     Get cluster-specific configuration (paths, cache directories, container name).
 
@@ -593,6 +647,7 @@ def get_cluster_config(
     Example:
         >>> config = get_cluster_config('juwels')
         >>> print(config['triton_cache'])
+        '/p/scratch/projectnucleus/franke5/cache/triton'
     """
     if cluster is None:
         cluster = detect_cluster()
@@ -602,7 +657,7 @@ def get_cluster_config(
     # Lookup cluster configuration
     cluster_key = f"cluster.{cluster}"
     if cluster_key not in config:
-        available_clusters = [k.split('.')[1] for k in config.keys() if k.startswith('cluster.')]
+        available_clusters = [k.split(".")[1] for k in config.keys() if k.startswith("cluster.")]
         raise ValueError(
             f"Cluster '{cluster}' configuration not found.\n"
             f"Available clusters: {', '.join(available_clusters) or 'none'}\n"
@@ -612,31 +667,28 @@ def get_cluster_config(
     cluster_config = config[cluster_key]
 
     # Auto-generate cache paths from cache_base
-    cache_base = cluster_config.get('cache_base', '')
+    cache_base = cluster_config.get("cache_base", "")
 
     result = {
-        'output_dir': cluster_config.get('output_dir', ''),
-        'cache_base': cache_base,
+        "output_dir": cluster_config.get("output_dir", ""),
+        "cache_base": cache_base,
         # Auto-generated from cache_base, but can be overridden
-        'triton_cache': cluster_config.get('triton_cache', f"{cache_base}/triton"),
-        'hf_datasets_cache': cluster_config.get('hf_datasets_cache', f"{cache_base}/hf"),
-        'hf_home': cluster_config.get('hf_home', f"{cache_base}/hf"),
-        'torch_home': cluster_config.get('torch_home', f"{cache_base}/torch"),
-        'apptainer_cachedir': cluster_config.get('apptainer_cachedir', f"{cache_base}/apptainer"),
-        'apptainer_tmpdir': cluster_config.get('apptainer_tmpdir', f"{cache_base}/apptainer"),
+        "triton_cache": cluster_config.get("triton_cache", f"{cache_base}/triton"),
+        "hf_datasets_cache": cluster_config.get("hf_datasets_cache", f"{cache_base}/hf"),
+        "hf_home": cluster_config.get("hf_home", f"{cache_base}/hf"),
+        "torch_home": cluster_config.get("torch_home", f"{cache_base}/torch"),
+        "apptainer_cachedir": cluster_config.get("apptainer_cachedir", f"{cache_base}/apptainer"),
+        "apptainer_tmpdir": cluster_config.get("apptainer_tmpdir", f"{cache_base}/apptainer"),
     }
 
     # Add optional data_dir if present (Capella-specific)
-    if 'data_dir' in cluster_config:
-        result['data_dir'] = cluster_config['data_dir']
+    if "data_dir" in cluster_config:
+        result["data_dir"] = cluster_config["data_dir"]
 
     return result
 
 
-def get_env_exports(
-    cluster: Optional[str] = None,
-    user: Optional[str] = None
-) -> str:
+def get_env_exports(cluster: Optional[str] = None, user: Optional[str] = None) -> str:
     """
     Generate shell export statements for cluster-specific cache directories.
 
@@ -650,12 +702,35 @@ def get_env_exports(
     Example:
         >>> exports = get_env_exports('juwels')
         >>> print(exports)
+        export TRITON_CACHE_DIR="/p/scratch/projectnucleus/franke5/cache/triton"
+        export TORCHINDUCTOR_CACHE_DIR="/p/scratch/projectnucleus/franke5/cache/triton"
+        export TORCHINDUCTOR_FX_GRAPH_CACHE="1"
+        export HF_DATASETS_CACHE="/p/project1/transfernetx/franke5/data/cache/"
         ...
     """
     config = get_cluster_config(cluster, user)
 
     exports = []
+    # Triton cache for kernel compilation
     exports.append(f'export TRITON_CACHE_DIR="{config["triton_cache"]}"')
+
+    # PyTorch Inductor cache (torch.compile) - CRITICAL for cache persistence!
+    # Uses same directory as TRITON_CACHE_DIR for compiled artifacts
+    exports.append(f'export TORCHINDUCTOR_CACHE_DIR="{config["triton_cache"]}"')
+
+    # Enable FX graph caching - required for torch.compile cache to work
+    exports.append('export TORCHINDUCTOR_FX_GRAPH_CACHE="1"')
+
+    # Enable AOTAutograd caching for additional speedup
+    exports.append('export TORCHINDUCTOR_AUTOGRAD_CACHE="1"')
+
+    # Disable CUDA graphs to save memory (they use extra memory during recording)
+    # This prevents OOM when using high batch sizes with torch.compile
+    # Need to disable BOTH cudagraphs and cudagraph_trees!
+    exports.append('export TORCHINDUCTOR_TRITON_CUDAGRAPHS="False"')
+    exports.append('export TORCHINDUCTOR_TRITON_CUDAGRAPH_TREES="False"')
+
+    # Other cache directories
     exports.append(f'export HF_DATASETS_CACHE="{config["hf_datasets_cache"]}"')
     exports.append(f'export HF_HOME="{config["hf_home"]}"')
     exports.append(f'export TORCH_HOME="{config["torch_home"]}"')
@@ -663,16 +738,14 @@ def get_env_exports(
     exports.append(f'export APPTAINER_TMPDIR="{config["apptainer_tmpdir"]}"')
 
     # Add DATA_DIR if present (Capella-specific)
-    if 'data_dir' in config:
+    if "data_dir" in config:
         exports.append(f'export DATA_DIR="{config["data_dir"]}"')
 
-    return '\n'.join(exports)
+    return "\n".join(exports)
 
 
 if __name__ == "__main__":
     # Command-line interface for testing
-    import sys
-
     if len(sys.argv) > 1 and sys.argv[1] == "list":
         list_available()
     elif len(sys.argv) > 1 and sys.argv[1] == "detect":
@@ -683,17 +756,21 @@ if __name__ == "__main__":
             print(f"Error: {e}")
             sys.exit(1)
     elif len(sys.argv) > 1 and sys.argv[1] == "validate":
-        # Usage: python cluster_config.py validate <dataset> <tokenizer> <cluster> <config_file> [config_base_path]
+        # Usage: python cluster_config.py validate <dataset> <tokenizer> <cluster> <config_file> [base_path]
         if len(sys.argv) < 6:
-            print("Usage: python cluster_config.py validate <dataset> <tokenizer> <cluster> <config_file> [config_base_path]")
-            print("Example: python cluster_config.py validate slimpajama_627b neox juwels base_norm.toml /opt/titan-sci/titan_oellm/configs")
+            print(
+                "Usage: python cluster_config.py validate <dataset> <tokenizer> <cluster> <config_file> [base_path]"
+            )
+            print(
+                "Example: python cluster_config.py validate slimpajama_627b neox juwels qwen3_custom.toml /opt/titan-oellm"
+            )
             sys.exit(1)
 
         dataset = sys.argv[2]
         tokenizer = sys.argv[3]
         cluster = sys.argv[4]
         config_file = sys.argv[5]
-        config_base_path = sys.argv[6] if len(sys.argv) > 6 else "/opt/titan-sci/titan_oellm/configs"
+        config_base_path = sys.argv[6] if len(sys.argv) > 6 else "/opt/titan-oellm/titan_oellm/configs"
 
         valid, messages = validate_paths(dataset, tokenizer, cluster, config_file, config_base_path)
         for msg in messages:

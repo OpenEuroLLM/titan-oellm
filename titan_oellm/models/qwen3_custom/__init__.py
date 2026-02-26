@@ -24,13 +24,13 @@ from torchtitan.distributed.pipeline_parallel import pipeline_llm
 
 from .infra.parallelize import parallelize_qwen3_custom
 from .model.args import Qwen3CustomModelArgs
-from .model.model import Qwen3
+from .model.model import Qwen3Model
 from .model.state_dict_adapter import Qwen3StateDictAdapter
 
 __all__ = [
     "parallelize_qwen3_custom",
     "Qwen3CustomModelArgs",
-    "Qwen3",
+    "Qwen3Model",
     "Qwen3StateDictAdapter",
     "qwen3_custom_configs",
 ]
@@ -40,17 +40,31 @@ __all__ = [
 # Reference: https://huggingface.co/collections/Qwen/qwen3-6751c5cbf6fc98b0838a3d2f
 qwen3_custom_configs = {
     "debugmodel": Qwen3CustomModelArgs(
-        dim=512,
-        n_layers=8,
-        n_heads=8,
-        n_kv_heads=4,
+        dim=256,
+        n_layers=2,
+        n_heads=2,
+        n_kv_heads=2,
         vocab_size=151936,
-        head_dim=64,
-        hidden_dim=1536,
+        head_dim=128,
+        hidden_dim=1024,
         norm_eps=1e-6,
         rope_theta=1000000,
         qk_norm=True,
-        max_seq_len=4096,
+        max_seq_len=1024,
+        depth_init=True,
+    ),
+    "125M": Qwen3CustomModelArgs(
+        dim=512,
+        n_layers=18,
+        n_heads=4,
+        n_kv_heads=4,
+        vocab_size=151936,
+        head_dim=128,
+        hidden_dim=2048,
+        norm_eps=1e-6,
+        rope_theta=1000000,
+        qk_norm=True,
+        max_seq_len=8192,
         depth_init=True,
     ),
     "0.5B": Qwen3CustomModelArgs(
@@ -160,13 +174,13 @@ def get_train_spec() -> TrainSpec:
 
     This integrates the Qwen3 model with titan-sci infrastructure:
     - sci_dataloader for data loading
-    - Universal LR scheduler (supports WSD, cosine, OU, universal_ou, etc.)
+    - Universal LR scheduler (3-phase: warm, main, cooldown)
     - sci_validator for validation
     - Parameter logging with TensorBoard
     - HuggingFace checkpoint loading via state_dict_adapter
     """
     return TrainSpec(
-        model_cls=Qwen3,
+        model_cls=Qwen3Model,
         model_args=qwen3_custom_configs,
         parallelize_fn=parallelize_qwen3_custom,
         pipelining_fn=pipeline_llm,  # Standard torchtitan v0.2.0 pipeline

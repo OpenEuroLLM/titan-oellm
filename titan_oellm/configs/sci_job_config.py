@@ -1,8 +1,30 @@
 # Copyright (c) Titan-OELLM Custom Components.
 
 from dataclasses import dataclass, field
+import os
+import re
 from typing import Literal
-from torchtitan.config import JobConfig as BaseJobConfig, Model as BaseModel, LRScheduler as BaseLRScheduler
+
+from torchtitan.config import (
+    JobConfig as BaseJobConfig,
+    LRScheduler as BaseLRScheduler,
+    Model as BaseModel,
+)
+from torchtitan.config.job_config import (
+    Compile as BaseCompile,
+    Job as BaseJob,
+    Parallelism as BaseParallelism,
+    Training as BaseTraining,
+)
+from torchtitan.tools.logging import logger
+
+
+@dataclass
+class Job(BaseJob):
+    """Extended Job config."""
+
+    continue_training: bool = False
+    """Resume from latest checkpoint in dump_folder if available."""
 
 
 @dataclass
@@ -128,6 +150,9 @@ class ParameterLogging:
     log_optimizer_states: bool = True
     """Log AdamW optimizer state statistics"""
 
+    log_gates: bool = False
+    """Log MoE gate statistics (only applicable for MoE models)"""
+
     include_patterns: list[str] = field(default_factory=list)
     """Include only parameters matching these patterns (empty = include all)"""
 
@@ -246,14 +271,25 @@ class LRScheduler(BaseLRScheduler):
     """
 
     cooldown_type: str = "cosine"
-    """
-    Decay curve type for cooldown phase: "linear", "cosine", "sqrt", "exp"
-    """
+
+
+
+@dataclass
+class Compile(BaseCompile):
+    """Extended Compile config with mode support."""
+
+    mode: str | None = None
+    """torch.compile mode: 'default', 'reduce-overhead', 'max-autotune', 'max-autotune-no-cudagraphs'.
+    None uses standard compilation without a specific mode."""
 
 
 @dataclass
 class Model(BaseModel):
-    """Extended Model config with gpt_plus and qwen3_custom specific arguments."""
+    """Extended Model config with norm_gpt and gpt_plus specific arguments."""
+
+    # Tokenizer configuration
+    tokenizer_path: str = ""
+    """Path to tokenizer directory (typically injected by cluster_config)"""
 
     # Vocabulary size (must match tokenizer)
     vocab_size: int = 50432
@@ -317,9 +353,134 @@ class Model(BaseModel):
     moe_inter_dim: int = 768
     """MoE intermediate dimension (Qwen3 MoE variants)"""
 
+
+@dataclass
+class Training(BaseTraining):
+    """Extended Training config with MoE-specific fields."""
+
+    debug_moe_force_load_balance: bool = False
+    """Force load balancing for MoE debugging (only applicable for MoE models)"""
+
+
+@dataclass
+class Parallelism(BaseParallelism):
+    """Extended Parallelism config with enable_compiled_autograd field."""
+
+    enable_compiled_autograd: bool = False
+    """Enable compiled autograd for improved performance"""
+
+
+def apply_continue_training(job_config: "JobConfig") -> None:
+    """Enable resume-from-checkpoint if requested and a checkpoint exists."""
+    try:
+        if not getattr(job_config.job, "continue_training", False):
+            return
+
+        checkpoint_folder = job_config.checkpoint.folder
+        if not os.path.isabs(checkpoint_folder):
+            checkpoint_folder = os.path.join(job_config.job.dump_folder, checkpoint_folder)
+
+        if not os.path.isdir(checkpoint_folder):
+            logger.info(
+                "continue_training is enabled but checkpoint folder does not exist: %s",
+                checkpoint_folder,
+            )
+            return
+
+        pattern = re.compile(r"step-(\d+)")
+        steps: list[int] = []
+        for entry in os.listdir(checkpoint_folder):
+            match = pattern.search(entry)
+            if not match:
+                continue
+            step_dir = os.path.join(checkpoint_folder, entry)
+            if not os.path.isdir(step_dir):
+                continue
+            if os.path.isfile(os.path.join(step_dir, ".metadata")) or os.path.isfile(
+                os.path.join(step_dir, "model.safetensors.index.json")
+            ):
+                steps.append(int(match.group(1)))
+
+        if not steps:
+            logger.info(
+                "continue_training is enabled but no checkpoints found in %s",
+                checkpoint_folder,
+            )
+            return
+
+        job_config.checkpoint.enable = True
+        if job_config.checkpoint.load_step == -1:
+            job_config.checkpoint.load_step = -1
+
+        logger.info(
+            "continue_training enabled: will load latest checkpoint from %s",
+            checkpoint_folder,
+        )
+    except Exception as exc:
+        logger.warning("Failed to apply continue_training: %s", exc)
+
+
+def apply_output_dir_prefix(job_config: "JobConfig") -> None:
+    """Prefix dump_folder with OUTPUT_DIR if provided.
+
+    Logic:
+    - If dump_folder starts with "./" (explicit relative path), use as-is relative to CWD
+    - If dump_folder starts with "/" (absolute path), use as-is
+    - Otherwise (implicit relative like "path/..."), prefix with OUTPUT_DIR
+    """
+    try:
+        import sys
+
+        # CRITICAL FIX: Check if CLI is overriding dump_folder
+        # If --job.dump_folder is in CLI args and starts with "./", skip prefixing
+        # This handles the case where TOML has "qwen3_custom" but CLI has "./outputs/..."
+        for arg in sys.argv[1:]:
+            if arg.startswith("--job.dump_folder=") or arg.startswith("--job.dump-folder="):
+                cli_value = arg.split("=", 1)[1]
+                if cli_value.startswith("./") or cli_value.startswith("/"):
+                    logger.debug(
+                        "Skipping OUTPUT_DIR prefix due to CLI override: %s",
+                        cli_value,
+                    )
+                    return
+
+        output_dir = os.environ.get("OUTPUT_DIR", "").strip()
+        if not output_dir:
+            return
+
+        dump_folder = job_config.job.dump_folder
+        if not dump_folder:
+            return
+
+        # If dump_folder starts with "./", user is explicitly specifying relative path
+        # Respect that choice and don't apply OUTPUT_DIR prefix
+        if dump_folder.startswith("./"):
+            logger.debug(
+                "Skipping OUTPUT_DIR prefix for explicitly relative dump_folder: %s",
+                dump_folder,
+            )
+            return
+
+        # If dump_folder is an absolute path, use as-is
+        if dump_folder.startswith("/"):
+            logger.debug(
+                "Skipping OUTPUT_DIR prefix for absolute dump_folder: %s",
+                dump_folder,
+            )
+            return
+
+        # For implicit relative paths (e.g., "path/..."), apply OUTPUT_DIR prefix
+        job_config.job.dump_folder = os.path.join(output_dir, dump_folder)
+        logger.info(
+            "Prefixed dump_folder with OUTPUT_DIR: %s",
+            job_config.job.dump_folder,
+        )
+    except Exception as exc:
+        logger.warning("Failed to apply OUTPUT_DIR prefix: %s", exc)
+
 @dataclass
 class JobConfig(BaseJobConfig):
-    """Extended JobConfig with SciData, SciTokenizer, ParameterLogging, and custom Validation.
+    """Extended JobConfig with SciData, SciTokenizer, Normalizer, ParameterLogging, and custom Validation.
 
     Inherits all standard torchtitan fields (job, metrics, optimizer, training, parallelism,
     checkpoint, activation_checkpoint, compile, quantize, experimental, etc.) from BaseJobConfig
@@ -327,12 +488,20 @@ class JobConfig(BaseJobConfig):
     """
 
     # Override base fields with extended versions
+    job: Job = field(default_factory=Job)
     model: Model = field(default_factory=Model)
+    training: Training = field(default_factory=Training)
     lr_scheduler: LRScheduler = field(default_factory=LRScheduler)
-    validation: Validation = field(default_factory=Validation)
+    parallelism: Parallelism = field(default_factory=Parallelism)
+    validation: Validation = field(default_factory=Validation)  # Override base Validation with custom implementation
+    compile: Compile = field(default_factory=Compile)  # Override to add mode
 
     # Custom titan-oellm fields
     data: SciData = field(default_factory=SciData)
     sci_tokenizer: SciTokenizer = field(default_factory=SciTokenizer)
     parameter_logging: ParameterLogging = field(default_factory=ParameterLogging)
     benchmarks: Benchmarks = field(default_factory=Benchmarks)
+
+    def __post_init__(self) -> None:
+        apply_output_dir_prefix(self)
+        apply_continue_training(self)

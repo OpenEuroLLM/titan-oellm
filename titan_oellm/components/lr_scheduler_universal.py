@@ -182,7 +182,6 @@ class UniversalLRSchedulersContainer(Stateful):
                 # Global
                 lr_min_absolute=lr_min_absolute,
                 last_epoch=-1,
-                verbose=False  # We handle logging at container level
             )
             self.schedulers.append(scheduler)
 

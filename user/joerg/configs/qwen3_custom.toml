@@ -3,8 +3,6 @@
 # Use with: python train.py --job.config_file=configs/qwen3_custom.toml <cluster-specific-args>
 
 [job]
-dump_folder = "./outputs/torchtitan"
-description = "TorchTitan training for qwen3_custom model"
 custom_config_module = "titan_oellm.configs.sci_job_config"
 
 [model]
@@ -58,28 +56,21 @@ beta1 = 0.9
 beta2 = 0.95
 
 [lr_scheduler]
-# Scheduler type selection
-scheduler_type = "universal"  # Universal scheduler that can emulate all others
-
-# Phase 1 - Warm phase (warmup or warmdown)
-warm_steps = 0  # Absolute warm steps (mutually exclusive with warm_ratio, both can be 0)
-warm_ratio = 0.0  # Warm steps as ratio of total (mutually exclusive with warm_steps, both can be 0)
-warm_direction = "up"  # Direction: "up" (warmup) or "down" (warmdown)
-warm_type = "linear"  # Decay curve: "linear", "cosine", "exp", "sqrt"
-warm_start_ratio = 2.0  # Starting LR multiplier for warmdown (only used when warm_direction="down")
-
-# Phase 2 - Main phase 
-use_ou_process = false  # Enable OU stochastic process
-main_decay_type = "cosine"  # Base schedule decay: "const", "linear", "cosine", "exp", "sqrt"
-main_decay_ratio = 0.1  # Target LR ratio at end of main phase (e.g., 0.1 = 10% of base_lr)
-
-# Phase 3 - Cooldown phase
-cooldown_steps = 0  # Absolute cooldown steps (mutually exclusive with cooldown_ratio, both can be 0)
-cooldown_ratio = 0.0  # Cooldown steps as ratio of total (mutually exclusive with cooldown_steps, both can be 0)
-cooldown_type = "cosine"  # Decay curve: "linear", "cosine", "exp", "sqrt"
-
-# Global parameters
+scheduler_type = "universal"
 lr_min_absolute = 1e-5  # Absolute minimum learning rate
+# Phase 1: Warm (warmup or warmdown)
+warm_steps = 0
+warm_ratio = 0.0  # Or use ratio: warm_steps as % of total
+warm_direction = "up"
+warm_type = "linear"
+# Phase 2: Main phase
+main_decay_type = "cosine"
+main_decay_ratio = 0.1
+# Phase 3: Cooldown
+cooldown_steps = 0
+cooldown_ratio = 0.0  # Or use steps: cooldown_steps
+cooldown_type = "cosine"
+
 
 [parallelism]
 data_parallel_replicate_degree = 1
@@ -111,7 +102,7 @@ early_stop = false
 # Memory budget for mode="memory_budget": 0.0 = max memory savings, 1.0 = max speed
 memory_budget = 0.5
 
-# Visualize memory/speed tradeoff pareto curve (generates SVG in dump_folder/memory_budget_pareto/)
+# Visualize memory/speed tradeoff pareto curve (generates SVG in $OUTPUT_DIR/<dump_folder>/memory_budget_pareto/)
 visualize_memory_budget_pareto = false
 
 [quantize.linear.float8]
