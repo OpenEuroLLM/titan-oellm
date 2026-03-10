@@ -38,8 +38,6 @@ export NCCL_TIMEOUT=1800
 export NCCL_IB_TIMEOUT=100
 export NCCL_IB_RETRY_CNT=20
 export NCCL_ALGO=Ring
-# export NCCL_DEBUG=INFO
-# export NCCL_DEBUG_SUBSYS=INIT,COLL
 
 export HF_ALLOW_CODE_EVAL="1"
 
@@ -93,8 +91,6 @@ CONTAINER="titan_capella_0.2.1.sif"      # Container filename
 # This now runs in the venv on the login node
 
 echo "Loading cluster configuration for user '$TITAN_USER' on cluster '$CLUSTER'..."
-echo "DEBUG: Positional arguments (\$@): $@"
-echo "DEBUG: Number of arguments: $#"
 
 # Load cluster configuration using container with writable cache paths
 eval "$(singularity exec \
@@ -204,10 +200,6 @@ APPTAINER="singularity exec --nv \
     --env NCCL_TIMEOUT=$NCCL_TIMEOUT \
     --env NCCL_IB_TIMEOUT=$NCCL_IB_TIMEOUT \
     --env NCCL_IB_RETRY_CNT=$NCCL_IB_RETRY_CNT \
-    --env NCCL_DEBUG=$NCCL_DEBUG \
-    --env NCCL_DEBUG_SUBSYS=$NCCL_DEBUG_SUBSYS \
-    --env NCCL_SOCKET_IFNAME=ibp \
-    --env GLOO_SOCKET_IFNAME=ibp \
     --env TORCH_HOME=$TORCH_HOME \
     --env CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES \
     --env TRITON_CACHE_DIR=$TRITON_CACHE_DIR \
@@ -256,7 +248,7 @@ echo "Cluster arguments generated successfully."
 LAUNCHER="torchrun \
     --nnodes $SLURM_NNODES \
     --nproc_per_node $NUM_GPUS_PER_NODE \
-    --node_rank $SLURM_PROCID \
+    --node_rank \$SLURM_PROCID \
     --max_restarts 3 \
     --rdzv_backend c10d \
     --rdzv_endpoint $MASTER_ADDR:$MASTER_PORT"
