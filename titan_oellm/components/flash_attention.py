@@ -136,6 +136,13 @@ class FlashAttentionWrapper(nn.Module):
 
         batch, seqlen, n_heads, head_dim = q.shape
 
+        # Validate cu_seqlens and max_seqlen are consistent
+        if cu_seqlens is not None:
+            if max_seqlen is None:
+                raise ValueError("max_seqlen must be provided when cu_seqlens is provided")
+            if not cu_seqlens.is_cuda or cu_seqlens.device != q.device:
+                cu_seqlens = cu_seqlens.to(q.device)
+        
         if cu_seqlens is not None and self.flash_attn_varlen_fn is not None:
             # Variable-length attention with document masking
             # Flatten to (total_tokens, n_heads, head_dim) as required by flash_attn_varlen_func

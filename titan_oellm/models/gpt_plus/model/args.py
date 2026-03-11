@@ -93,6 +93,14 @@ class TransformerModelArgs(BaseModelArgs):
         # Flash Attention config
         if hasattr(job_config.model, 'use_flash_attn'):
             self.use_flash_attn = job_config.model.use_flash_attn
+        
+        # Set attn_type based on use_flex_attn and use_flash_attn
+        if self.use_flex_attn:
+            self.attn_type = "flex"
+        elif self.use_flash_attn:
+            self.attn_type = "flash"
+        else:
+            self.attn_type = "sdpa"
 
         if job_config.activation_checkpoint.mode == "selective" and self.use_flex_attn:
             raise ValueError(

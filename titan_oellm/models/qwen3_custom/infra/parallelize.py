@@ -72,6 +72,7 @@ def parallelize_qwen3_custom(
     model_compile_enabled = (
         job_config.compile.enable and "model" in job_config.compile.components
     )
+    tp_mesh = None
     if parallel_dims.tp_enabled:
         if (
             job_config.parallelism.enable_async_tensor_parallel

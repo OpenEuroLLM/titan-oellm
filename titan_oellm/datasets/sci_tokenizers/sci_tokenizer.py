@@ -50,6 +50,10 @@ class SciHFTokenizer(BaseTokenizer):
         # Initialize BOS/EOS token attributes (frequently used)
         self.bos_token = None
         self.eos_token = None
+        self.bos_id = None
+        self.eos_id = None
+        self.pad_token = None
+        self.pad_id = None
 
         # Infer special tokens and adding BOS/EOS behavior
         self._infer_special_tokens()
@@ -59,10 +63,20 @@ class SciHFTokenizer(BaseTokenizer):
         self._n_words = self.tokenizer.get_vocab_size()
         self.eos_id = self.eos_id if hasattr(self, 'eos_id') and self.eos_id is not None else 0
         self.bos_id = self.bos_id if hasattr(self, 'bos_id') and self.bos_id is not None else 1
-        self.pad_id = getattr(self, 'pad_id', -1)
+        
+        # Infer pad_id from config or use eos_id as fallback (common in GPT models)
+        if self.config and "pad_token" in self.config:
+            pad_token = self._get_token_from_config(self.config, "pad_token")
+            if pad_token:
+                self.pad_token = pad_token
+                self.pad_id = self.tokenizer.token_to_id(pad_token)
+        
+        # If no pad token found, use eos_id as fallback (standard for GPT)
+        if self.pad_id is None:
+            self.pad_id = self.eos_id if self.eos_id is not None else 0
 
         logger.info(
-            f"SciHFTokenizer built: #words {self._n_words}, BOS ID {self.bos_id}, EOS ID {self.eos_id}"
+            f"SciHFTokenizer built: #words {self._n_words}, BOS ID {self.bos_id}, EOS ID {self.eos_id}, PAD ID {self.pad_id}"
         )
 
     def _load_config(self, config_path: str) -> Optional[dict]:
