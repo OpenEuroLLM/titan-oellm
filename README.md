@@ -31,7 +31,7 @@ cd titan-oellm
 # Load and verify TorchTitan submodule
 git submodule update --init --recursive
 cd torchtitan && git describe --tags && cd ..
-# Should output: v0.2.0
+# Should output: v0.2.1
 ```
 
 ### 2. Build Container
@@ -39,13 +39,13 @@ cd torchtitan && git describe --tags && cd ..
 ```bash
 export APPTAINER_CACHEDIR=/path/to/your/cache
 export APPTAINER_TMPDIR=/path/to/your/tmp
-apptainer build --fakeroot titan_CLUSTER_0.2.0.sif titan_0.2.0.def
+apptainer build --fakeroot titan_CLUSTER_0.2.1.sif titan_0.2.1.def
 
 ```
 
 Test container:
 ```bash
-apptainer shell --nv titan_CLUSTER_0.2.0.sif
+apptainer shell --nv titan_CLUSTER_0.2.1.sif
 python -c "import torch; print(torch.__version__); print(torch.cuda.is_available())"
 ```
 

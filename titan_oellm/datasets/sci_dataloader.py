@@ -9,6 +9,7 @@ from torchtitan.config import JobConfig
 
 from titan_oellm.constants import IGNORE_INDEX
 from titan_oellm.datasets.dataloader.mmap_dataset import MMapDataset
+from titan_oellm.datasets.dataloader.deterministic_packed_dataset import DeterministicPackedDataset
 # from titan_oellm.datasets.dataloader.parallel_mmap_dataset_chunked import ChunkedMMapDataset
 from titan_oellm.datasets.dataloader.mmap_dataset_chunked import ChunkedMMapDataset
 from titan_oellm.datasets.sequencer.simple_concat import StreamingSequencer
@@ -26,7 +27,7 @@ def _compute_docs_per_chunk(job_config: JobConfig) -> int:
     Returns:
         Number of docs per chunk to use for validation split, or 0 if not in split mode.
     """
-    if getattr(job_config.validation, 'data_source', 'offline') != 'split':
+    if getattr(job_config.validation, "data_source", "offline") != "split":
         return 0
 
     split_samples = job_config.validation.split_samples
@@ -65,28 +66,30 @@ def build_sci_dataloader(
     min_doc_len = job_config.data.min_doc_len
     data_prefix = job_config.data.data_prefix
     chunks_dir = job_config.data.chunks_dir
-    dataloader = job_config.data.dataloader
+    dataloader_type = job_config.data.dataloader
     seed = job_config.data.seed
 
     ignore_index = IGNORE_INDEX
 
-    # Check for validation split mode - training excludes validation samples
-    exclude_last_n = None           # For MMapDataset
-    exclude_first_n_per_chunk = None   # For ChunkedMMapDataset
+    # Check for validation split mode — training excludes validation samples
+    exclude_last_n = None  # For MMapDataset
+    exclude_first_n_per_chunk = None  # For ChunkedMMapDataset
 
-    if (hasattr(job_config, 'validation') and
-        getattr(job_config.validation, 'data_source', 'offline') == 'split'):
-
-        if dataloader == "MMapDataset":
+    if hasattr(job_config, "validation") and getattr(job_config.validation, "data_source", "offline") == "split":
+        if dataloader_type == "MMapDataset":
             exclude_last_n = job_config.validation.split_samples
             if exclude_last_n > 0:
                 logger.info(f"Training dataloader: excluding last {exclude_last_n} samples for validation split")
-        elif dataloader == "ChunkedMMapDataset":
+        elif dataloader_type == "ChunkedMMapDataset":
             exclude_first_n_per_chunk = _compute_docs_per_chunk(job_config)
             if exclude_first_n_per_chunk > 0:
-                logger.info(f"Training dataloader: excluding first {exclude_first_n_per_chunk} docs per chunk for validation split")
+                logger.info(
+                    f"Training dataloader: excluding first {exclude_first_n_per_chunk} docs per chunk for validation split"
+                )
 
-    if dataloader == "MMapDataset":
+    # ── 1. Create dataset ────────────────────────────────────────────────
+
+    if dataloader_type == "MMapDataset":
         dataset = MMapDataset(
             path_prefix=data_prefix,
             shuffle=True,
@@ -95,10 +98,10 @@ def build_sci_dataloader(
             seed=seed,
             dp_world_size=dp_world_size,
             dp_rank=dp_rank,
-            validate=True,  # Enable automatic validation
+            validate=True,
             exclude_last_n=exclude_last_n,
         )
-    elif dataloader == "ChunkedMMapDataset":
+    elif dataloader_type == "ChunkedMMapDataset":
         dataset = ChunkedMMapDataset(
             chunks_dir=chunks_dir,
             dp_world_size=dp_world_size,
@@ -107,46 +110,58 @@ def build_sci_dataloader(
             seed=seed,
             exclude_first_n_per_chunk=exclude_first_n_per_chunk,
         )
+    elif dataloader_type == "DeterministicPackedDataset":
+        raw_gbs = job_config.training.global_batch_size
+        resolved_gbs = raw_gbs if raw_gbs > 0 else job_config.training.local_batch_size * dp_world_size
+        dataset = DeterministicPackedDataset(
+            chunks_dir=chunks_dir,
+            dp_world_size=dp_world_size,
+            dp_rank=dp_rank,
+            global_batch_size=resolved_gbs,
+            seq_len=seq_len,
+            min_sequence_length=min_doc_len,
+            eos_id=tokenizer.eos_id,
+            infinite=True,
+            seed=seed,
+            exclude_first_n_per_chunk=exclude_first_n_per_chunk,
+        )
     else:
-        raise ValueError(f"Unknown dataloader: {dataloader}")
+        raise ValueError(f"Unknown dataloader: {dataloader_type}")
 
-    # Pass eos_id for document masking when block_causal attention is enabled
-    # eos_id = None
-    # if hasattr(job_config.model, 'attn_mask_type') and job_config.model.attn_mask_type == "block_causal":
-    eos_id = tokenizer.eos_id
+    # ── 2. Route to pipeline ─────────────────────────────────────────────
+    #
+    # Pre-packed datasets (DeterministicPackedDataset, BestFitPackedDataset)
+    # yield packed sequences — no sequencer needed.
+    # All other datasets yield documents that need StreamingSequencer.
 
-    sequencer = StreamingSequencer(
-        dataset=dataset,
-        sequence_length=seq_len,
-        min_sequence_length=min_doc_len,
-        drop_last=True,
-        eos_id=eos_id)
+    if dataloader_type in ("DeterministicPackedDataset", "BestFitPackedDataset"):
+        eos_id = tokenizer.eos_id
+        wrapped_dataset = dataset
+    else:
+        eos_id = tokenizer.eos_id
 
-    use_flash_attention = getattr(job_config.model, 'use_flash_attn', False)
+        sequencer = StreamingSequencer(
+            dataset=dataset, sequence_length=seq_len, min_sequence_length=min_doc_len, drop_last=True, eos_id=eos_id
+        )
+        wrapped_dataset = sequencer
 
-    # Fixed cu_seqlens size for torch.compile fullgraph mode
-    # Max docs = batch_size * (max docs per sample) + 1 for the leading zero
-    max_cu_seqlens_size = batch_size * (seq_len // min_doc_len + 1) + 1 if use_flash_attention else None
+    # ── 3. Collate and wrap ──────────────────────────────────────────────
 
-    collate_fn = partial(
-        collate_function,
-        ignore_index=ignore_index,
-        use_flash_attention=use_flash_attention,
-        eos_id=eos_id,
-        seq_len=seq_len,
-        max_cu_seqlens_size=max_cu_seqlens_size,
-    )
+    attn_config = _resolve_attention_config(job_config, batch_size, seq_len, min_doc_len)
+    collate_fn = _make_collate_fn(dataloader_type, attn_config, eos_id, seq_len, ignore_index)
 
-    dataloader = ParallelAwareDataloader(
-        dataset=sequencer,
+    dl = ParallelAwareDataloader(
+        dataset=wrapped_dataset,
         dp_rank=dp_rank,
         dp_world_size=dp_world_size,
         batch_size=batch_size,
         collate_fn=collate_fn,
     )
-    # Add ignore_index as attribute for use in loss calculation
-    dataloader.ignore_index = ignore_index
-    return dataloader
+    dl.ignore_index = ignore_index
+    return dl
+
+
+# ── Validation dataloader ───────────────────────────────────────────────────
 
 
 def build_sci_validation_dataloader(
@@ -164,7 +179,7 @@ def build_sci_validation_dataloader(
     )
     seq_len = job_config.training.seq_len
     min_doc_len = job_config.data.min_doc_len
-    dataloader = job_config.validation.dataloader
+    dataloader_type = job_config.validation.dataloader
     seed = job_config.data.seed
 
     ignore_index = IGNORE_INDEX
@@ -175,61 +190,68 @@ def build_sci_validation_dataloader(
     limit_samples = False if max_eval_samples == -1 else max_eval_samples
 
     # Determine data source and split params
-    data_source = getattr(job_config.validation, 'data_source', 'offline')
+    data_source = getattr(job_config.validation, "data_source", "offline")
 
-    use_only_last_n = None              # For MMapDataset
-    use_only_first_n_per_chunk = None   # For ChunkedMMapDataset
+    use_only_last_n = None  # For MMapDataset
+    use_only_first_n_per_chunk = None  # For ChunkedMMapDataset
 
-    if data_source == 'split':
+    if data_source == "split":
         # Use same data source as training, with split
-        if dataloader == "MMapDataset":
+        if dataloader_type == "MMapDataset":
             data_prefix = job_config.data.data_prefix  # Use training data path
             use_only_last_n = job_config.validation.split_samples
             logger.info(f"Validation dataloader (split mode): using last {use_only_last_n} samples from training data")
-        elif dataloader == "ChunkedMMapDataset":
+        elif dataloader_type == "ChunkedMMapDataset":
             chunks_dir = job_config.data.chunks_dir  # Use training chunks dir
             use_only_first_n_per_chunk = _compute_docs_per_chunk(job_config)
             logger.info(f"Validation dataloader (split mode): using first {use_only_first_n_per_chunk} docs per chunk")
         else:
-            raise ValueError(f"Unknown validation dataloader: {dataloader}")
+            raise ValueError(f"Unknown validation dataloader: {dataloader_type}")
     else:
         # Offline mode: use separate validation data
         data_prefix = job_config.validation.data_prefix
         chunks_dir = job_config.validation.data_prefix  # For ChunkedMMapDataset, use data_prefix as chunks_dir
 
-    if dataloader == "MMapDataset":
+    # ── 1. Create dataset ────────────────────────────────────────────────
+
+    if dataloader_type == "MMapDataset":
         dataset = MMapDataset(
             path_prefix=data_prefix,
-            shuffle=False,  # Don't shuffle validation data
-            infinite=False,  # Don't loop validation data infinitely
-            limit_samples=limit_samples,  # Limit total samples before worker partitioning
+            shuffle=False,
+            infinite=False,
+            limit_samples=limit_samples,
             seed=seed,
             dp_world_size=dp_world_size,
             dp_rank=dp_rank,
-            validate=True,  # Enable automatic validation
+            validate=True,
             use_only_last_n=use_only_last_n,
         )
-    elif dataloader == "ChunkedMMapDataset":
+    elif dataloader_type == "ChunkedMMapDataset":
         dataset = ChunkedMMapDataset(
             chunks_dir=chunks_dir,
             dp_world_size=dp_world_size,
             dp_rank=dp_rank,
-            infinite=False,  # Don't loop validation data infinitely
+            infinite=False,
             seed=seed,
             use_only_first_n_per_chunk=use_only_first_n_per_chunk,
         )
     else:
-        raise ValueError(f"Unknown validation dataloader: {dataloader}")
+        raise ValueError(f"Unknown validation dataloader: {dataloader_type}")
+
+    # ── 2. Route to pipeline ─────────────────────────────────────────────
 
     eos_id = tokenizer.eos_id
-    pad_id = getattr(tokenizer, 'pad_id', 0)  # Fall back to 0 if no pad_id
+    pad_id = getattr(tokenizer, "pad_id", 0)
+    if pad_id is None or pad_id < 0:
+        pad_id = eos_id
 
-    # Check evaluation mode
-    eval_mode = getattr(job_config.validation, 'eval_mode', 'concatenated')
+    eval_mode = getattr(job_config.validation, "eval_mode", "concatenated")
 
-    if eval_mode == 'document':
-        # Document mode: skip sequencer, evaluate each document independently
-        # Documents are padded/truncated directly without concatenation
+    if eval_mode == "document":
+        # Document mode: evaluate each document independently (no sequencer).
+        # Each sample = one document, truncated/padded to seq_len.
+        # This ensures document-aware validation regardless of training masking:
+        # no cross-document attention is possible with single-document samples.
         logger.info("Validation using document mode: each document evaluated independently")
 
         collate_fn = partial(
@@ -238,44 +260,35 @@ def build_sci_validation_dataloader(
             ignore_index=ignore_index,
             pad_id=pad_id,
         )
-
-        dataloader_dataset = dataset  # Use dataset directly, no sequencer
+        wrapped_dataset = dataset
 
     else:
-        # Concatenated mode (default): use sequencer to pack documents
+        # Concatenated mode (default): pack documents via sequencer
         sequencer = StreamingSequencer(
             dataset=dataset,
             sequence_length=seq_len,
             min_sequence_length=min_doc_len,
-            drop_last=False,  # Don't drop last for validation to avoid uneven batches across ranks
-            eos_id=eos_id)
-
-        use_flash_attention = getattr(job_config.model, 'use_flash_attn', False)
-
-        # Fixed cu_seqlens size for torch.compile fullgraph mode
-        # Use training batch size to ensure same size as training dataloader
-        train_batch_size = job_config.training.local_batch_size
-        max_cu_seqlens_size = train_batch_size * (seq_len // min_doc_len + 1) + 1 if use_flash_attention else None
-
-        collate_fn = partial(
-            collate_function,
-            ignore_index=ignore_index,
-            use_flash_attention=False,
+            drop_last=False,
             eos_id=eos_id,
-            seq_len=seq_len,
-            max_cu_seqlens_size=max_cu_seqlens_size,
         )
 
-        dataloader_dataset = sequencer
+        attn_config = _resolve_attention_config(
+            job_config, job_config.training.local_batch_size, seq_len, min_doc_len
+        )
+        # Validation disables flash attention for simplicity
+        attn_config["use_flash_attention"] = False
 
-    dataloader = ParallelAwareDataloader(
-        dataset=dataloader_dataset,
+        collate_fn = _make_collate_fn(dataloader_type, attn_config, eos_id, seq_len, ignore_index)
+        wrapped_dataset = sequencer
+
+    # ── 3. Wrap and return ───────────────────────────────────────────────
+
+    dl = ParallelAwareDataloader(
+        dataset=wrapped_dataset,
         dp_rank=dp_rank,
         dp_world_size=dp_world_size,
         batch_size=batch_size,
         collate_fn=collate_fn,
     )
-    # Add ignore_index as attribute for use in validation loss calculation
-    dataloader.ignore_index = ignore_index
-    return dataloader
-
+    dl.ignore_index = ignore_index
+    return dl

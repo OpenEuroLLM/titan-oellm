@@ -232,5 +232,6 @@ output/
 mpi-out.*
 mpi-err.*
 
-# venv
+.idea
 .venv*
+events*
