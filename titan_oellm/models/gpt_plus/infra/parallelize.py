@@ -44,9 +44,6 @@ def parallelize_gpt_plus(
     NOTE: The passed-in model preferably should be on meta device. Otherwise,
     the model must fit on GPU or CPU memory.
     """
-    # torchtitan v0.2.0: world_mesh is obtained from parallel_dims
-    world_mesh = parallel_dims.world_mesh
-
     # torchtitan v0.2.0: compile config moved from job_config.training to job_config.compile
     model_compile_enabled = (
         job_config.compile.enable and "model" in job_config.compile.components
@@ -70,10 +67,11 @@ def parallelize_gpt_plus(
         # all-gather happens in high precision.
         enable_float8_tensorwise_tp = enable_float8_linear and not float8_is_rowwise
 
+        tp_mesh = parallel_dims.get_mesh("tp")
         apply_tp(
             model,
-            world_mesh["tp"],
-            loss_parallel=parallel_dims.loss_parallel_enabled,
+            tp_mesh,
+            loss_parallel=not job_config.parallelism.disable_loss_parallel,
             enable_float8_tensorwise_tp=enable_float8_tensorwise_tp,
             enable_async_tp=job_config.parallelism.enable_async_tensor_parallel,
         )
@@ -115,11 +113,12 @@ def parallelize_gpt_plus(
         if job_config.training.enable_cpu_offload:
             logger.info("Applied CPU Offloading to the model")
     elif parallel_dims.dp_replicate_enabled:
-        if world_mesh.ndim > 1:
+        dp_mesh = parallel_dims.get_mesh("dp_replicate")
+        if parallel_dims.world_size != dp_mesh.size():
             raise RuntimeError("DDP has not supported > 1D parallelism")
         apply_ddp(
             model,
-            world_mesh,
+            dp_mesh,
             enable_compile=model_compile_enabled,
         )
 
@@ -190,13 +189,13 @@ def apply_tp(
     for transformer_block in model.layers.values():
         layer_plan = {
             "attn_norm": SequenceParallel(),
-            "attention": prepare_module_input(
-                input_layouts=(Shard(1), None),
-                desired_input_layouts=(Replicate(), None),
+             "attention": prepare_module_input(
+                input_layouts=(Shard(1), Replicate(), None, None, None),
+                desired_input_layouts=(Replicate(), Replicate(), None, None, None),
             ),
-            "attention.wq": colwise_parallel(),
-            "attention.wk": colwise_parallel(),
-            "attention.wv": colwise_parallel(),
+            "attention.wq": colwise_parallel(use_local_output=False),
+            "attention.wk": colwise_parallel(use_local_output=False),
+            "attention.wv": colwise_parallel(use_local_output=False),
             "attention.wo": rowwise_parallel(output_layouts=Shard(1)),
             "ffn_norm": SequenceParallel(),
             "feed_forward": prepare_module_input(
