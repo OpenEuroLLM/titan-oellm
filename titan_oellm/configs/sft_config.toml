@@ -1,0 +1,140 @@
+# Supervised Fine-Tuning Configuration
+# This configuration is optimized for fine-tuning a pretrained model on instruction data
+
+[job]
+dump_folder = "./outputs/sft_run"
+description = "Supervised Fine-Tuning with instruction dataset"
+custom_config_module = "titan_oellm.configs.sci_job_config"
+
+[model]
+name = "gpt_plus"  # Model architecture to fine-tune
+flavor = "0.5B"    # Model size variant
+vocab_size = 50432
+qk_norm_type = "RMSNorm"
+mlp_layers = 2
+mlp_activation = "swiglu"
+tie_embedding = false
+tokenizer_path = "/leonardo_work/OELLM_prod2026/users/ajha0001/titan-oellm/assets/gpt2"
+
+# Attention configuration
+use_flex_attn = false
+attn_mask_type = "causal"
+use_flash_attn = false   # Enabled to improve attention performance
+
+[training]
+dataset = "sft_dataset"
+local_batch_size = 16    # Increased for better GPU utilization and higher TFLOPs
+seq_len = 2048           # Maximum sequence length
+steps = 5000             # Fine-tuning typically needs fewer steps
+dtype = "bfloat16"
+mixed_precision_param = "bfloat16"
+
+# SFT-specific: only compute loss on response tokens
+mask_prompt = true
+
+# Gradient accumulation for effective larger batch
+global_batch_size = 64   # Increased from 32 for higher throughput
+
+[data]
+# OPTION 1: Use any HuggingFace dataset directly (easiest!)
+# Popular SFT datasets you can use without downloading:
+# - "tatsu-lab/alpaca" - Stanford Alpaca (52K instruction examples)
+# - "yahma/alpaca-cleaned" - Cleaned version of Alpaca
+# - "databricks/databricks-dolly-15k" - Dolly dataset (15K examples)
+# - "OpenAssistant/oasst1" - OpenAssistant conversations
+# - "timdettmers/openassistant-guanaco" - Guanaco dataset
+# - "WizardLM/WizardLM_evol_instruct_V2_196k" - WizardLM instructions
+# Uncomment to use:
+# data_prefix = "tatsu-lab/alpaca"
+# dataset_split = "train"  # Which split to use (train/test/validation)
+
+# OPTION 2: Use local JSONL file (default)
+data_prefix = "./data/sft_alpaca.jsonl"
+
+# OPTION 3: Reasoning datasets (uncomment to use)
+# For math reasoning:
+# data_prefix = "openai/gsm8k"
+# dataset_split = "train"
+# instruction_format = "reasoning_steps"  # or "cot" or "problem_solution"
+#
+# For general reasoning:
+# data_prefix = "TIGER-Lab/MathInstruct"
+# dataset_split = "train"
+# instruction_format = "reasoning_steps"
+
+# Instruction format: 
+# - "auto" - Auto-detect from data structure (recommended!)
+# - "alpaca" - {instruction, input, output}
+# - "chatml" - {messages: [{role, content}]}
+# - "sharegpt" - {conversations: [{from, value}]}
+# - "prompt_completion" - {prompt, completion}
+# - "text" - {text} for plain text
+# 
+# Reasoning datasets (chain-of-thought, step-by-step):
+# - "cot" - {question, chain_of_thought/thought/thinking, answer}
+# - "reasoning_steps" - {question, steps/reasoning (list or text), answer}
+# - "problem_solution" - {problem, solution, explanation (optional)}
+# 
+# Example reasoning datasets you can use:
+# - "openai/gsm8k" (math reasoning) - use instruction_format = "reasoning_steps"
+# - "TIGER-Lab/MathInstruct" (math with reasoning) - use instruction_format = "reasoning_steps"
+# - "reasoning-machines/open-o1-orca-math" (o1-style reasoning) - use instruction_format = "reasoning_steps"
+# - "kaist-ai/orca-math-word-problems" - use instruction_format = "reasoning_steps"
+instruction_format = "auto"
+
+# Optional settings:
+# text_field = "text"  # For plain text datasets, which field has the text
+# hf_dataset_name = "tatsu-lab/alpaca"  # Explicitly specify HF dataset
+
+seed = 42
+min_doc_len = 128
+
+[optimizer]
+name = "AdamW"
+lr = 2.0e-5           # Lower learning rate for fine-tuning (typically 1e-5 to 5e-5)
+weight_decay = 0.01
+beta1 = 0.9
+beta2 = 0.999
+eps = 1.0e-8
+
+[lr_scheduler]
+scheduler_type = "cosine"
+warmup_steps = 100    # Short warmup for fine-tuning
+min_lr_factor = 0.05       # Minimum learning rate factor (min_lr / base_lr = 1.0e-6 / 2.0e-5)
+
+[checkpoint]
+enable = true
+folder = "checkpoints/sft"  # Checkpoint folder (relative to dump_folder)
+interval = 500              # Save checkpoint every 500 steps
+
+# To resume from a pretrained checkpoint, add:
+# initial_load_path = "./outputs/pretrained_model/checkpoints/step-10000"
+
+[metrics]
+log_freq = 10
+disable_color_printing = false
+enable_tensorboard = true
+save_tb_folder = "tb_sft"
+
+[validation]
+enable = true
+freq = 500  # Validation frequency in steps
+# For SFT, validation can use a held-out instruction dataset
+# data_prefix = "./data/sft_validation.jsonl"
+
+[parallelism]
+# Adjust based on your cluster configuration
+data_parallel_replicate_degree = 1
+data_parallel_shard_degree = 2
+tensor_parallel_degree = 2
+pipeline_parallel_degree = 1
+
+
+
+# For multi-GPU training, increase these appropriately:
+# data_parallel_shard_degree = 4  # For 4 GPUs with FSDP
+# tensor_parallel_degree = 2      # For model parallelism
+
+[activation_checkpoint]
+mode = "none"  # ["none", "selective", "full"]
+selective_ac_option = 'op'  # 'int' = ac every positive int layer or 'op', ac based on ops policy
