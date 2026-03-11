@@ -53,11 +53,13 @@ export TITAN_USER
 CLUSTER="juwels"
 DATASET="${DATASET:-slimpajama_627b}"    # Dataset name from cluster_paths.toml
 TOKENIZER="${TOKENIZER:-neox}"           # Tokenizer name from cluster_paths.toml
-CONFIG="${CONFIG:-base_plus.toml}"       # Base config file
+CONFIG="${CONFIG:-base_norm.toml}"       # Base config file (base_norm.toml or base_plus.toml)
+CONTAINER="${CONTAINER:-titan_juwels_0.2.1.sif}"
 
 # Project and container configuration
 PROJECT_DIR=$(pwd)                       # Assume script is run from project root
-CONTAINER="titan_juwels_0.2.0.sif"       # Container filename
+
+
 
 # ============================================================================
 # LOAD CLUSTER CONFIGURATION
@@ -99,28 +101,37 @@ echo "Configuration loaded successfully:"
 echo "  PROJECT_DIR: $PROJECT_DIR"
 echo "  CONTAINER: $CONTAINER"
 echo "  Cache base: $(dirname $TRITON_CACHE_DIR)"
+echo "  PYTORCH_CUDA_ALLOC_CONF: $PYTORCH_CUDA_ALLOC_CONF"
+echo "  TORCH_INDUCTOR_CUDAGRAPH_DISABLE: $TORCH_INDUCTOR_CUDAGRAPH_DISABLE"
 
 # Create cache directories if they don't exist
 mkdir -p "$TRITON_CACHE_DIR"
 mkdir -p "$HF_DATASETS_CACHE"
 mkdir -p "$TORCH_HOME"
 
+# CUDA allocator: reduce fragmentation and large-alloc failures
+: "${PYTORCH_CUDA_ALLOC_CONF:=expandable_segments:True}"
+
+# Disable cudagraphs unless explicitly enabled (can increase memory usage)
+: "${TORCH_INDUCTOR_CUDAGRAPH_DISABLE:=1}"
+
 nodes=( $( scontrol show hostnames $SLURM_JOB_NODELIST ) )
-MASTER_IP=$(nslookup ${nodes[0]}i | grep "Address:" | tail -n1 | awk '{print $2}')
+# Resolve IPv4 addresses explicitly (JUWELS has dual-stack; torchrun needs IPv4 here)
+MASTER_IP=$(getent hosts ${nodes[0]} | awk '{print $1}' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -n1)
+if [ -z "$MASTER_IP" ]; then
+    echo "ERROR: Failed to resolve IPv4 for master node ${nodes[0]}"
+    exit 1
+fi
 
 echo "Master IP: $MASTER_IP"
 echo "Nodes: ${nodes[@]}"
 
-ml Stages/2025
-ml GCC/13.3.0
-ml Python/3.12.3
-ml CUDA/12
-ml cuDNN/9.5.0.50-CUDA-12
-ml NCCL/default-CUDA-12
-ml NVHPC/25.5-CUDA-12
-ml Apptainer-Tools
+ml Stages/2026
+ml GCC/14.3.0
+ml Python/3.13.5
+ml CUDA/13
+ml NCCL/default-CUDA-13
 
-# Define variables
 APPTAINER="apptainer exec --nv \
     --pwd /opt/titan-oellm \
     --env TITAN_USER=$TITAN_USER \
@@ -129,6 +140,9 @@ APPTAINER="apptainer exec --nv \
     --env MASTER_ADDR=$MASTER_IP \
     --env MASTER_PORT=29500 \
     --env TORCH_HOME=$TORCH_HOME \
+    --env PYTORCH_CUDA_ALLOC_CONF=$PYTORCH_CUDA_ALLOC_CONF \
+    --env TORCH_INDUCTOR_CUDAGRAPH_DISABLE=$TORCH_INDUCTOR_CUDAGRAPH_DISABLE \
+    --env PYTHONPATH=/opt/titan-oellm/torchtitan \
     --bind $PROJECT_DIR:/opt/titan-oellm \
     --bind $TRITON_CACHE_DIR:$TRITON_CACHE_DIR \
     --bind $HF_DATASETS_CACHE:$HF_DATASETS_CACHE \
@@ -146,7 +160,7 @@ CLUSTER_ARGS=$(apptainer exec \
 import sys
 sys.path.insert(0, '/opt/titan-oellm')
 from titan_oellm.cluster_config import get_cli_args
-print(get_cli_args('$DATASET', '$TOKENIZER', '$CLUSTER', '$CONFIG', '/opt/titan-oellm/titan_oellm/configs'))
+print(get_cli_args('$DATASET', '$TOKENIZER', '$CLUSTER', '$CONFIG'))
 ")
 
 # Check if validation failed
@@ -158,10 +172,14 @@ echo "Validation passed."
 
 for (( i=0; i<$SLURM_NNODES; i++ )); do
     node=${nodes[$i]}
-    node_ip=$(nslookup ${node}i | grep "Address:" | tail -n1 | awk '{print $2}')
-    
+    node_ip=$(getent hosts ${node} | awk '{print $1}' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -n1)
+    if [ -z "$node_ip" ]; then
+        echo "ERROR: Failed to resolve IPv4 for node ${node}"
+        exit 1
+    fi
+
     SRUN_ARGS="--exclusive -N1 -n1 -w ${node}"
-    
+
     LAUNCHER="torchrun \
         --nnodes=$SLURM_NNODES \
         --nproc_per_node=4 \
@@ -171,11 +189,11 @@ for (( i=0; i<$SLURM_NNODES; i++ )); do
         --local_addr=$node_ip \
         --rdzv_backend=static \
         --rdzv_endpoint=$MASTER_IP:29500"
-    
-    srun $SRUN_ARGS $APPTAINER bash -c '
+
+    srun $SRUN_ARGS $APPTAINER bash -c "
         cd /opt/titan-oellm
-        exec '"$LAUNCHER -m torchtitan.train --job.config_file=/opt/titan-oellm/titan_oellm/configs/$CONFIG $CLUSTER_ARGS $@" &
-    
+        exec $LAUNCHER -m torchtitan.train $CLUSTER_ARGS \"\$@\"" &
+
     if [ $i -eq 0 ]; then
         sleep 10
     else
