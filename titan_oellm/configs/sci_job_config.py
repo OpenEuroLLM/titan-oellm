@@ -54,6 +54,27 @@ class SciData:
 
 
 @dataclass
+class ValidationDataset:
+    """Validation dataset override configuration (optional fields override Validation defaults)."""
+
+    name: str = ""
+    """Name for metrics/logging (if empty, auto-assigned)."""
+
+    data_prefix: str | None = None
+    local_batch_size: int | None = None
+    max_eval_samples: int | None = None
+    dataloader: str | None = None
+    data_source: str | None = None
+    split_samples: int | None = None
+    eval_mode: str | None = None
+    steps: int | None = None
+
+    best_fit_buffer_size: int = 500
+    """Tree size for BestFitPackedDataset packing (default: 500)"""
+
+
+
+@dataclass
 class Validation:
     """Validation configuration for evaluation during training."""
 

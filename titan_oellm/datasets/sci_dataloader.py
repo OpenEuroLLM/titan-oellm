@@ -53,6 +53,51 @@ def _compute_docs_per_chunk(job_config: JobConfig) -> int:
 
 
 
+def _resolve_attention_config(job_config: JobConfig, batch_size: int, seq_len: int, min_doc_len: int) -> dict:
+    """Resolve flash/flex attention settings from model config.
+
+    Returns dict with use_flash_attention, use_document_mask, max_cu_seqlens_size.
+    """
+    use_flash_attention = getattr(job_config.model, "use_flash_attn", False)
+    use_flex_attn = getattr(job_config.model, "use_flex_attn", False)
+    attn_mask_type = getattr(job_config.model, "attn_mask_type", "causal")
+
+    # block_causal must go through FlexAttention — SDPA+mask falls back to math backend
+    if attn_mask_type == "block_causal":
+        use_flex_attn = True
+
+    use_document_mask = attn_mask_type == "block_causal" and not use_flex_attn and not use_flash_attention
+
+    # Fixed cu_seqlens size for torch.compile fullgraph mode
+    # Max docs = batch_size * (max docs per sample) + 1 for the leading zero
+    max_cu_seqlens_size = batch_size * (seq_len // min_doc_len + 1) + 1 if use_flash_attention else None
+
+    return {
+        "use_flash_attention": use_flash_attention,
+        "use_document_mask": use_document_mask,
+        "max_cu_seqlens_size": max_cu_seqlens_size,
+    }
+
+
+def _make_collate_fn(
+    dataloader_type: str,
+    attn_config: dict,
+    eos_id,
+    seq_len: int,
+    ignore_index: int,
+) -> partial:
+    """Build the collate function for training/concatenated-validation pipelines."""
+    return partial(
+        collate_function,
+        ignore_index=ignore_index,
+        use_flash_attention=attn_config["use_flash_attention"],
+        use_document_mask=attn_config["use_document_mask"],
+        eos_id=eos_id,
+        seq_len=seq_len,
+        max_cu_seqlens_size=attn_config["max_cu_seqlens_size"],
+    )
+
+
 def build_sci_dataloader(
     dp_world_size: int,
     dp_rank: int,
