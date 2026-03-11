@@ -762,6 +762,11 @@ class Transformer(nn.Module, ModelProtocol):
             torch.Tensor: Output logits after applying the Transformer model.
 
         """
+        # Validate token inputs if they're embeddings (not from PP)
+        if self.tok_embeddings and isinstance(tokens, torch.Tensor) and tokens.dtype in [torch.long, torch.int64]:
+            assert tokens.min() >= 0, f"Token IDs must be non-negative, got min={tokens.min()}"
+            assert tokens.max() < self.vocab_size, f"Token IDs exceed vocab size {self.vocab_size}, got max={tokens.max()}"
+        
         # passthrough for nonexistent layers, allows easy configuration of pipeline parallel stages
         h = self.tok_embeddings(tokens) if self.tok_embeddings else tokens
 
