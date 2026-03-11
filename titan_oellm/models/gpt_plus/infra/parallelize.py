@@ -60,7 +60,7 @@ def parallelize_gpt_plus(
             raise RuntimeError("Async TP requires model compilation (--compile.enable true and 'model' in --compile.components)")
 
         enable_float8_linear = "float8" in job_config.model.converters
-        float8_is_rowwise = job_config.float8.recipe_name in (
+        float8_is_rowwise = job_config.quantize.linear.float8.recipe_name in (
             "rowwise",
             "rowwise_with_gw_hp",
         )
@@ -90,13 +90,13 @@ def parallelize_gpt_plus(
         parallel_dims.dp_shard_enabled or parallel_dims.cp_enabled
     ):  # apply FSDP or HSDP, potentially with Context Parallel
         if parallel_dims.dp_replicate_enabled:
-            dp_mesh_dim_names = ("dp_replicate", "dp_shard_cp")
+            dp_mesh = parallel_dims.get_mesh(["dp_replicate", "fsdp"])
         else:
-            dp_mesh_dim_names = ("dp_shard_cp",)
+            dp_mesh = parallel_dims.get_mesh("fsdp")
 
         apply_fsdp(
             model,
-            world_mesh[tuple(dp_mesh_dim_names)],
+            dp_mesh,
             param_dtype=TORCH_DTYPE_MAP[job_config.training.mixed_precision_param],
             reduce_dtype=TORCH_DTYPE_MAP[job_config.training.mixed_precision_reduce],
             pp_enabled=parallel_dims.pp_enabled,
@@ -121,7 +121,6 @@ def parallelize_gpt_plus(
             model,
             world_mesh,
             enable_compile=model_compile_enabled,
-            enable_compiled_autograd=job_config.parallelism.enable_compiled_autograd,
         )
 
     return model
@@ -330,8 +329,7 @@ def apply_ac(model: nn.Module, ac_config):
 
 def apply_compile(model: nn.Module, compile_config, use_flash_attn: bool = False):
     """
-    Apply torch.compile to each TransformerBlock with configurable backend and static shapes.
-    Static shapes (dynamic=False) avoid FakeTensor tracing issues in PyTorch 2.9/Triton 3.4.
+    Apply torch.compile to each TransformerBlock.
 
     Args:
         model: The model to compile
@@ -347,7 +345,6 @@ def apply_compile(model: nn.Module, compile_config, use_flash_attn: bool = False
             transformer_block,
             backend=compile_config.backend,
             fullgraph=fullgraph,
-            dynamic=False,  # Force static shapes to fix FakeTensor allocation errors
         )
         model.layers.register_module(layer_id, transformer_block)
 
@@ -418,15 +415,9 @@ def apply_ddp(
     model: nn.Module,
     dp_mesh: DeviceMesh,
     enable_compile: bool,
-    enable_compiled_autograd: bool,
 ):
     if enable_compile:
-        if enable_compiled_autograd:
-            torch._dynamo.config.optimize_ddp = (
-                "python_reducer_without_compiled_forward"
-            )
-        else:
-            torch._dynamo.config.optimize_ddp = "ddp_optimizer"
+        torch._dynamo.config.optimize_ddp = "ddp_optimizer"
 
     replicate(model, device_mesh=dp_mesh, bucket_cap_mb=100)
 

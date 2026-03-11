@@ -7,7 +7,7 @@
 # Copyright (c) Meta Platforms, Inc. All Rights Reserved.
 
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 
 from torch import nn
 

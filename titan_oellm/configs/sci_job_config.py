@@ -47,7 +47,7 @@ class SciData:
     """Directory containing data chunks for ChunkedMMapDataset"""
 
     dataloader: str = "MMapDataset"
-    """Type of dataloader to use: 'MMapDataset' or 'ChunkedMMapDataset'"""
+    """Type of dataloader to use: 'MMapDataset', 'DeterministicPackedDataset', or 'ChunkedMMapDataset'"""
 
     seed: int = 42
     """Random seed for data loading"""
@@ -93,6 +93,11 @@ class Validation:
     """Evaluation mode: 'concatenated' (default, documents concatenated into fixed-length sequences) or
     'document' (each document evaluated independently with padding/truncation for comparable metrics)"""
 
+    datasets: list[ValidationDataset] = field(default_factory=list)
+    """
+    Optional list of additional validation dataset configurations.
+    If provided, each entry runs its own validation pass and logs metrics separately.
+    """
 
 @dataclass
 class Benchmarks:

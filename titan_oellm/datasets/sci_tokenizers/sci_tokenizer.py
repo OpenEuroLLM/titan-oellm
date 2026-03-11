@@ -74,6 +74,13 @@ class SciHFTokenizer(BaseTokenizer):
 
     def _load_tokenizer_from_path(self, tokenizer_path: str) -> HFTokenizer:
         """Load tokenizer from various file formats."""
+        if not tokenizer_path:
+            raise ValueError(
+                "Tokenizer path is empty. Please provide a valid tokenizer path via:\n"
+                "  1. CLI argument: --model.tokenizer_path=/path/to/tokenizer\n"
+                "  2. Config file: [model] section with tokenizer_path = \"/path/to/tokenizer\"\n"
+                "  3. Use cluster_config.get_cli_args() to auto-inject the path"
+            )
         if not os.path.exists(tokenizer_path):
             raise FileNotFoundError(f"Tokenizer path '{tokenizer_path}' does not exist")
 
@@ -199,7 +206,9 @@ class SciHFTokenizer(BaseTokenizer):
             else None
         )
 
-        # Store BOS/EOS tokens as class attributes if they match
+        # Store BOS/EOS tokens as class attributes if they match.
+        # Use separate if statements (not elif) because BOS and EOS can be
+        # the same token (e.g., GPT-NeoX uses <|endoftext|> for both).
         if token_str == config_bos_token:
             self.bos_token = token_str
             self.bos_id = (
@@ -207,7 +216,7 @@ class SciHFTokenizer(BaseTokenizer):
                 if token_id is not None
                 else self.tokenizer.token_to_id(token_str)
             )
-        elif token_str == config_eos_token:
+        if token_str == config_eos_token:
             self.eos_token = token_str
             self.eos_id = (
                 token_id

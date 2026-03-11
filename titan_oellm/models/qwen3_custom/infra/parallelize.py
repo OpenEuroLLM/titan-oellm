@@ -102,7 +102,7 @@ def parallelize_qwen3_custom(
     if parallel_dims.tp_enabled or parallel_dims.ep_enabled:
         dual_pipe_v = get_dual_pipe_v_flag(job_config, parallel_dims)
 
-        tp_mesh = parallel_dims.get_mesh("tp")
+        tp_mesh = parallel_dims.get_optional_mesh("tp")
         apply_moe_ep_tp(
             model,
             tp_mesh=tp_mesh,
@@ -123,8 +123,21 @@ def parallelize_qwen3_custom(
         )
 
     # turn on per-TransformerBlock compile after AC wrapping and before FSDP
-    if model_compile_enabled:
+    # EP + compile + AC is incompatible with FSDP2+compile: the compiled graph
+    # embeds FSDP all-gather ops only for the directly compiled FSDP unit. With EP,
+    # expert params live in a separate inner FSDP unit → backward mixes DTensors
+    # from EP-sharded experts with plain tensors from the compiled attention graph,
+    # causing "aten.mm.default got mixed torch.Tensor and DTensor". Skip compile
+    # when EP is active; EP itself replaces AllGather with AllToAll, recovering
+    # significant throughput without needing compile.
+    if model_compile_enabled and not parallel_dims.ep_enabled:
         apply_compile(model, job_config.compile, parallel_dims.ep_enabled)
+    elif model_compile_enabled and parallel_dims.ep_enabled:
+        logger.info(
+            "EP mode: skipping torch.compile (EP + compile + AC incompatible due to "
+            "FSDP2 all-gather embedding in compiled graph conflicting with EP inner FSDP). "
+            "Training in eager mode."
+        )
 
     if parallel_dims.fsdp_enabled:
         # apply FSDP or HSDP, potentially with Context Parallel
@@ -272,10 +285,8 @@ def apply_non_moe_tp(
             )
 
         parallelize_module(
-            # pyrefly: ignore [bad-argument-type]
             module=transformer_block,
             device_mesh=tp_mesh,
-            # pyrefly: ignore [bad-argument-type]
             parallelize_plan=layer_plan,
         )
 
