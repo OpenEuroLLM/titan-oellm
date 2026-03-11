@@ -106,6 +106,18 @@ def build_sci_dataloader(
     infinite: bool = True,
 ) -> ParallelAwareDataloader:
     """Build a data loader for Sci datasets."""
+    if getattr(job_config.training, "dataset", "") in {"sft_dataset", "sft_reasoning"}:
+        from titan_oellm.datasets.sft_dataloader import build_sft_dataloader
+
+        logger.info("Using SFT dataloader for instruction/reasoning datasets")
+        return build_sft_dataloader(
+            dp_world_size=dp_world_size,
+            dp_rank=dp_rank,
+            tokenizer=tokenizer,
+            job_config=job_config,
+            infinite=infinite,
+        )
+
     batch_size = job_config.training.local_batch_size
     seq_len = job_config.training.seq_len
     min_doc_len = job_config.data.min_doc_len

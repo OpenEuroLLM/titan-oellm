@@ -43,6 +43,22 @@ class SciData:
     data_prefix: str = ""
     """Data prefix path for MMapDataset"""
 
+    # SFT / HuggingFace dataset options (used by sft_dataloader)
+    instruction_format: str = "auto"
+    """Instruction format for SFT (alpaca, chatml, cot, reasoning_steps, auto)"""
+
+    dataset_split: str = "train"
+    """HuggingFace dataset split to use"""
+
+    hf_dataset_name: str = ""
+    """Explicit HuggingFace dataset name (optional)"""
+
+    hf_dataset_config: str = ""
+    """HuggingFace dataset config name (optional)"""
+
+    text_field: str = ""
+    """Field name for text-only datasets (optional)"""
+
     chunks_dir: str = ""
     """Directory containing data chunks for ChunkedMMapDataset"""
 
@@ -71,7 +87,6 @@ class ValidationDataset:
 
     best_fit_buffer_size: int = 500
     """Tree size for BestFitPackedDataset packing (default: 500)"""
-
 
 
 @dataclass
@@ -382,10 +397,13 @@ class Model(BaseModel):
 
 @dataclass
 class Training(BaseTraining):
-    """Extended Training config with MoE-specific fields."""
+    """Extended Training config with MoE-specific and SFT fields."""
 
     debug_moe_force_load_balance: bool = False
-    """Force load balancing for MoE debugging (only applicable for MoE models)"""
+    mask_prompt: bool = True
+    """Force load balancing for MoE debugging (only applicable for MoE models)
+       mask_prompt: When True, dataloader should provide 'loss_mask' to indicate which tokens to include.
+    """
 
 
 @dataclass
@@ -508,7 +526,7 @@ def apply_output_dir_prefix(job_config: "JobConfig") -> None:
 class JobConfig(BaseJobConfig):
     """Extended JobConfig with SciData, SciTokenizer, Normalizer, ParameterLogging, and custom Validation.
 
-    Inherits all standard torchtitan fields (job, metrics, optimizer, training, parallelism,
+    Inherits all standard torchtitan fields (job, metrics, optimizer, parallelism,
     checkpoint, activation_checkpoint, compile, quantize, experimental, etc.) from BaseJobConfig
     and adds titan-oellm custom fields.
     """
