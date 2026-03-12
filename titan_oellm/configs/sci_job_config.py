@@ -40,11 +40,11 @@ class SciData:
     min_doc_len: int = 10
     """Minimum document length"""
 
-    data_prefix: str = ""
-    """Data prefix path for MMapDataset"""
+    data_prefix: list[str] | str = ""
+    """Data prefix path(s) for MMapDataset, or chunk directory(ies) for chunk-based dataloaders."""
 
-    chunks_dir: str = ""
-    """Directory containing data chunks for ChunkedMMapDataset"""
+    chunks_dir: list[str] | str = ""
+    """Directory(ies) containing data chunks for ChunkedMMapDataset / DeterministicPackedDataset"""
 
     dataloader: str = "MMapDataset"
     """Type of dataloader to use: 'MMapDataset', 'DeterministicPackedDataset', or 'ChunkedMMapDataset'"""

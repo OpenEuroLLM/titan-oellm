@@ -110,9 +110,12 @@ def build_sci_dataloader(
     seq_len = job_config.training.seq_len
     min_doc_len = job_config.data.min_doc_len
     data_prefix = job_config.data.data_prefix
-    chunks_dir = job_config.data.chunks_dir
     dataloader_type = job_config.data.dataloader
     seed = job_config.data.seed
+
+    # For chunk-based dataloaders, data_prefix doubles as the chunk directory source
+    # when chunks_dir is not explicitly set.
+    chunks_dir = job_config.data.chunks_dir or data_prefix
 
     ignore_index = IGNORE_INDEX
 
@@ -135,17 +138,36 @@ def build_sci_dataloader(
     # ── 1. Create dataset ────────────────────────────────────────────────
 
     if dataloader_type == "MMapDataset":
-        dataset = MMapDataset(
-            path_prefix=data_prefix,
-            shuffle=True,
-            infinite=infinite,
-            limit_samples=False,
-            seed=seed,
-            dp_world_size=dp_world_size,
-            dp_rank=dp_rank,
-            validate=True,
-            exclude_last_n=exclude_last_n,
-        )
+        prefixes = data_prefix if isinstance(data_prefix, list) else [data_prefix]
+        if len(prefixes) == 1:
+            dataset = MMapDataset(
+                path_prefix=prefixes[0],
+                shuffle=True,
+                infinite=infinite,
+                limit_samples=False,
+                seed=seed,
+                dp_world_size=dp_world_size,
+                dp_rank=dp_rank,
+                validate=True,
+                exclude_last_n=exclude_last_n,
+            )
+        else:
+            import torch
+            datasets = [
+                MMapDataset(
+                    path_prefix=p,
+                    shuffle=True,
+                    infinite=infinite,
+                    limit_samples=False,
+                    seed=seed,
+                    dp_world_size=dp_world_size,
+                    dp_rank=dp_rank,
+                    validate=True,
+                    exclude_last_n=exclude_last_n,
+                )
+                for p in prefixes
+            ]
+            dataset = torch.utils.data.ConcatDataset(datasets)
     elif dataloader_type == "ChunkedMMapDataset":
         dataset = ChunkedMMapDataset(
             chunks_dir=chunks_dir,
