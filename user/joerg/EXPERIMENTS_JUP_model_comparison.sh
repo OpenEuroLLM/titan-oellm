@@ -89,6 +89,7 @@ bash submit_job.sh \
     --model.tie_embedding \
     --job.dump_folder=${BASE_OUTPUT}/01_gpt_plus_130Msci/n${NODES}_lr${LR}
 
+
 # --- 02. qwen3_custom 130Msci ---
 echo "Submitting: 02_qwen3_custom_130Msci"
 TITAN_USER=joerg \
@@ -105,7 +106,4 @@ bash submit_job.sh \
     --model.enable_weight_tying \
     --job.dump_folder=${BASE_OUTPUT}/02_qwen3_custom_130Msci/n${NODES}_lr${LR}
 
-echo ""
-echo "=== Both jobs submitted ==="
-echo "Compare TensorBoard curves at: ${BASE_OUTPUT}/"
-echo "Key metrics: loss/train, loss/val, throughput (tokens/s)"
+

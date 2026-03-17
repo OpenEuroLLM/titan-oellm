@@ -356,11 +356,11 @@ class Model(BaseModel):
     attn_gate_bias: bool = True
     """Whether to use bias in gate linear layers"""
 
-    # Qwen3-specific parameters
-    qk_norm: bool = True
-    """Enable QK normalization in attention (Qwen3)"""
-    rope_theta: float = 1000000
-    """RoPE theta value for rotary embeddings (Qwen3)"""
+    # Qwen3-specific parameters (None = use flavor value)
+    qk_norm: bool | None = None
+    """Enable QK normalization in attention (Qwen3). None = use flavor value."""
+    rope_theta: float | None = None
+    """RoPE theta value for rotary embeddings (Qwen3). None = use flavor value."""
 
     # RoPE scaling parameters (gpt_plus and other models supporting long context)
     rope_scaling_factor: float = 8.0
@@ -372,22 +372,22 @@ class Model(BaseModel):
     rope_original_max_position_embeddings: int = 8192
     """Original maximum position embeddings before scaling (default: 8192)"""
 
-    head_dim: int = 128
-    """Dimension per attention head (Qwen3)"""
-    hidden_dim: int = 3072
-    """FFN hidden dimension (Qwen3)"""
-    norm_eps: float = 1e-6
-    """Layer normalization epsilon (Qwen3)"""
-    depth_init: bool = True
-    """Use depth-dependent initialization (Qwen3)"""
-    enable_weight_tying: bool = False
-    """Tie embedding and output head weights (Qwen3)"""
-    use_complex_rope: bool = False
-    """Complex-mul RoPE (interleaved pairing, fewer intermediates); incompatible with HF checkpoints"""
-    moe_enabled: bool = False
-    """Enable Mixture of Experts (Qwen3 MoE variants)"""
-    moe_inter_dim: int = 768
-    """MoE intermediate dimension (Qwen3 MoE variants)"""
+    head_dim: int | None = None
+    """Dimension per attention head (Qwen3). None = use flavor value."""
+    hidden_dim: int | None = None
+    """FFN hidden dimension (Qwen3). None = use flavor value."""
+    norm_eps: float | None = None
+    """Layer normalization epsilon (Qwen3). None = use flavor value."""
+    depth_init: bool | None = None
+    """Use depth-dependent initialization (Qwen3). None = use flavor value."""
+    enable_weight_tying: bool | None = None
+    """Tie embedding and output head weights (Qwen3). None = use flavor value."""
+    use_complex_rope: bool | None = None
+    """Complex-mul RoPE (interleaved pairing, fewer intermediates). None = use flavor value."""
+    moe_enabled: bool | None = None
+    """Enable Mixture of Experts. None = use flavor value."""
+    moe_inter_dim: int | None = None
+    """MoE intermediate dimension. None = use flavor value."""
 
 
 @dataclass
