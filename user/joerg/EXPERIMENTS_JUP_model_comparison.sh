@@ -86,7 +86,7 @@ bash submit_job.sh \
     --time=$TIME \
     -- \
     "${COMMON_ARGS[@]}" \
-    --model.tie_embedding=True \
+    --model.tie_embedding \
     --job.dump_folder=${BASE_OUTPUT}/01_gpt_plus_130Msci/n${NODES}_lr${LR}
 
 # --- 02. qwen3_custom 130Msci ---
@@ -102,7 +102,7 @@ bash submit_job.sh \
     --time=$TIME \
     -- \
     "${COMMON_ARGS[@]}" \
-    --model.enable_weight_tying=True \
+    --model.enable_weight_tying \
     --job.dump_folder=${BASE_OUTPUT}/02_qwen3_custom_130Msci/n${NODES}_lr${LR}
 
 echo ""
