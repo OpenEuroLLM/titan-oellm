@@ -25,7 +25,7 @@ class Qwen3CustomModelArgs(BaseModelArgs):
     Qwen3 model arguments with titan-sci integration.
 
     This extends the base Qwen3 model with:
-    - Integration with sci_job_config for TOML configuration
+    - Integration with oellm_job_config for TOML configuration
     - Support for sci_dataloader and learning rate schedulers
     - HuggingFace checkpoint loading via state_dict_adapter
     """
@@ -49,6 +49,8 @@ class Qwen3CustomModelArgs(BaseModelArgs):
     eos_id: int = 151645
 
     enable_weight_tying: bool = False
+    use_complex_rope: bool = False  # Complex-mul RoPE (interleaved pairing, fewer intermediates); incompatible with HF checkpoints
+    use_flex_attn: bool = False  # Not supported; field exists to guard compatibility checks
 
     # MoE params
     moe_enabled: bool = False
@@ -67,32 +69,50 @@ class Qwen3CustomModelArgs(BaseModelArgs):
         if hasattr(job_config.model, 'vocab_size'):
             self.vocab_size = job_config.model.vocab_size
 
-        # Update Qwen3-specific parameters from config
-        if hasattr(job_config.model, 'qk_norm'):
-            self.qk_norm = job_config.model.qk_norm
-        if hasattr(job_config.model, 'rope_theta'):
-            self.rope_theta = job_config.model.rope_theta
-        if hasattr(job_config.model, 'head_dim'):
-            self.head_dim = job_config.model.head_dim
-        if hasattr(job_config.model, 'hidden_dim'):
-            self.hidden_dim = job_config.model.hidden_dim
-        if hasattr(job_config.model, 'norm_eps'):
-            self.norm_eps = job_config.model.norm_eps
-        if hasattr(job_config.model, 'depth_init'):
-            self.depth_init = job_config.model.depth_init
-        if hasattr(job_config.model, 'enable_weight_tying'):
-            self.enable_weight_tying = job_config.model.enable_weight_tying
+        # Update Qwen3-specific parameters from config.
+        # Fields typed as Optional (int | None, bool | None) in sci_job_config
+        # default to None → skip to preserve the flavor value.
+        cfg = job_config.model
+        if hasattr(cfg, 'qk_norm'):
+            self.qk_norm = cfg.qk_norm
+        if hasattr(cfg, 'rope_theta'):
+            self.rope_theta = cfg.rope_theta
+        if hasattr(cfg, 'head_dim') and cfg.head_dim is not None:
+            self.head_dim = cfg.head_dim
+        if hasattr(cfg, 'hidden_dim') and cfg.hidden_dim is not None:
+            self.hidden_dim = cfg.hidden_dim
+        if hasattr(cfg, 'norm_eps'):
+            self.norm_eps = cfg.norm_eps
+        if hasattr(cfg, 'depth_init'):
+            self.depth_init = cfg.depth_init
+        if hasattr(cfg, 'enable_weight_tying') and cfg.enable_weight_tying is not None:
+            self.enable_weight_tying = cfg.enable_weight_tying
+        if hasattr(cfg, 'use_complex_rope'):
+            self.use_complex_rope = cfg.use_complex_rope
 
         # MoE configuration
-        if hasattr(job_config.model, 'moe_enabled'):
-            self.moe_enabled = job_config.model.moe_enabled
-        if hasattr(job_config.model, 'moe_inter_dim'):
-            self.moe_inter_dim = job_config.model.moe_inter_dim
+        if hasattr(cfg, 'moe_enabled') and cfg.moe_enabled is not None:
+            self.moe_enabled = cfg.moe_enabled
+        if hasattr(cfg, 'moe_inter_dim') and cfg.moe_inter_dim is not None:
+            self.moe_inter_dim = cfg.moe_inter_dim
 
         # MoE debug force load balance
         self.moe_args._debug_force_load_balance = (
             job_config.debug.moe_force_load_balance
         )
+
+        # Compatibility checks
+        if job_config.activation_checkpoint.mode == "selective" and self.use_flex_attn:
+            raise ValueError(
+                "FlexAttention is not compatible with selective AC yet. "
+                "See https://github.com/pytorch/pytorch/issues/147879"
+            )
+
+        if job_config.parallelism.context_parallel_degree > 1 and self.use_flex_attn:
+            raise ValueError(
+                "FlexAttention is not compatible with CP yet. "
+                "We are still working on this."
+            )
 
     def get_nparams_and_flops(self, model: nn.Module, seq_len: int) -> tuple[int, int]:
         return get_moe_model_nparams_and_flops(self, model, 2 * self.head_dim, seq_len)
