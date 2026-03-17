@@ -103,7 +103,7 @@ bash submit_job.sh \
     --time=$TIME \
     -- \
     "${COMMON_ARGS[@]}" \
-    --model.enable_weight_tying \
+    --model.enable_weight_tying=True \
     --job.dump_folder=${BASE_OUTPUT}/02_qwen3_custom_130Msci/n${NODES}_lr${LR}
 
 
