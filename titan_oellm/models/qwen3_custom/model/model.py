@@ -341,19 +341,15 @@ class Attention(nn.Module):
 
 class FeedForward(nn.Module):
     """
-    FeedForward module
+    FeedForward module with SwiGLU activation.
+
+    Uses separate w1 (gate) and w3 (up) projections to avoid allocating a
+    single contiguous (batch, seq, 2*hidden_dim) activation tensor, which
+    reduces peak memory and fragmentation pressure under torch.compile.
 
     Args:
         dim (int): Input dimension.
         hidden_dim (int): Hidden dimension of the feedforward layer.
-        multiple_of (int): Value to ensure hidden dimension is a multiple of this value.
-        ffn_dim_multiplier (float | None): Custom multiplier for hidden dimension. Defaults to None.
-
-    Attributes:
-        w1 (Linear): Linear transformation for the first layer.
-        w2 (Linear): Linear transformation for the second layer.
-        w3 (Linear): Linear transformation for the third layer.
-
     """
 
     def __init__(
@@ -363,18 +359,17 @@ class FeedForward(nn.Module):
     ):
         super().__init__()
 
-        # Hidden dimension is directly added from the model argsS
-        self.w1 = nn.Linear(dim, hidden_dim, bias=False)
-        self.w2 = nn.Linear(hidden_dim, dim, bias=False)
-        self.w3 = nn.Linear(dim, hidden_dim, bias=False)
+        self.w1 = nn.Linear(dim, hidden_dim, bias=False)  # gate projection
+        self.w3 = nn.Linear(dim, hidden_dim, bias=False)  # up projection
+        self.w2 = nn.Linear(hidden_dim, dim, bias=False)   # down projection
 
     def forward(self, x):
         return self.w2(F.silu(self.w1(x)) * self.w3(x))
 
     def init_weights(self, init_std: float):
         nn.init.trunc_normal_(self.w1.weight, mean=0.0, std=0.02)
-        for linear in (self.w2, self.w3):
-            nn.init.trunc_normal_(linear.weight, mean=0.0, std=init_std)
+        nn.init.trunc_normal_(self.w3.weight, mean=0.0, std=0.02)
+        nn.init.trunc_normal_(self.w2.weight, mean=0.0, std=init_std)
 
 
 class TransformerBlock(nn.Module):
@@ -502,11 +497,6 @@ class Qwen3Model(nn.Module, ModelProtocol):
         self.norm = nn.RMSNorm(model_args.dim, eps=model_args.norm_eps)
 
         self.output = nn.Linear(model_args.dim, model_args.vocab_size, bias=False)
-
-        # Tie embedding and output weights if specified (must happen before FSDP
-        # so that FSDP sees a single shared parameter instead of two separate ones)
-        if model_args.enable_weight_tying:
-            self.output.weight = self.tok_embeddings.weight
 
     def init_weights(
         self,

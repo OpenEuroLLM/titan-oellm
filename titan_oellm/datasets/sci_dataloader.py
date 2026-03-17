@@ -10,7 +10,6 @@ from torchtitan.config import JobConfig
 from titan_oellm.constants import IGNORE_INDEX
 from titan_oellm.datasets.dataloader.mmap_dataset import MMapDataset
 from titan_oellm.datasets.dataloader.deterministic_packed_dataset import DeterministicPackedDataset
-# from titan_oellm.datasets.dataloader.parallel_mmap_dataset_chunked import ChunkedMMapDataset
 from titan_oellm.datasets.dataloader.mmap_dataset_chunked import ChunkedMMapDataset
 from titan_oellm.datasets.sequencer.simple_concat import StreamingSequencer
 from titan_oellm.datasets.utils.collator import collate_function, collate_function_document_eval
@@ -47,7 +46,9 @@ def _compute_docs_per_chunk(job_config: JobConfig) -> int:
     docs_per_chunk = math.ceil(split_samples / num_chunks)
     actual_samples = docs_per_chunk * num_chunks
 
-    logger.info(f"Split config: {split_samples} requested → {docs_per_chunk} docs/chunk × {num_chunks} chunks = {actual_samples} actual")
+    logger.info(
+        f"Split config: {split_samples} requested → {docs_per_chunk} docs/chunk × {num_chunks} chunks = {actual_samples} actual"
+    )
     return docs_per_chunk
 
 
@@ -110,9 +111,12 @@ def build_sci_dataloader(
     seq_len = job_config.training.seq_len
     min_doc_len = job_config.data.min_doc_len
     data_prefix = job_config.data.data_prefix
-    chunks_dir = job_config.data.chunks_dir
     dataloader_type = job_config.data.dataloader
     seed = job_config.data.seed
+
+    # For chunk-based dataloaders, data_prefix doubles as the chunk directory source
+    # when chunks_dir is not explicitly set.
+    chunks_dir = job_config.data.chunks_dir or data_prefix
 
     ignore_index = IGNORE_INDEX
 
@@ -135,17 +139,36 @@ def build_sci_dataloader(
     # ── 1. Create dataset ────────────────────────────────────────────────
 
     if dataloader_type == "MMapDataset":
-        dataset = MMapDataset(
-            path_prefix=data_prefix,
-            shuffle=True,
-            infinite=infinite,
-            limit_samples=False,
-            seed=seed,
-            dp_world_size=dp_world_size,
-            dp_rank=dp_rank,
-            validate=True,
-            exclude_last_n=exclude_last_n,
-        )
+        prefixes = data_prefix if isinstance(data_prefix, list) else [data_prefix]
+        if len(prefixes) == 1:
+            dataset = MMapDataset(
+                path_prefix=prefixes[0],
+                shuffle=True,
+                infinite=infinite,
+                limit_samples=False,
+                seed=seed,
+                dp_world_size=dp_world_size,
+                dp_rank=dp_rank,
+                validate=True,
+                exclude_last_n=exclude_last_n,
+            )
+        else:
+            import torch
+            datasets = [
+                MMapDataset(
+                    path_prefix=p,
+                    shuffle=True,
+                    infinite=infinite,
+                    limit_samples=False,
+                    seed=seed,
+                    dp_world_size=dp_world_size,
+                    dp_rank=dp_rank,
+                    validate=True,
+                    exclude_last_n=exclude_last_n,
+                )
+                for p in prefixes
+            ]
+            dataset = torch.utils.data.ConcatDataset(datasets)
     elif dataloader_type == "ChunkedMMapDataset":
         dataset = ChunkedMMapDataset(
             chunks_dir=chunks_dir,

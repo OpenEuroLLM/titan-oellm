@@ -14,7 +14,7 @@ class ParameterLoggingConfig:
     log_parameters: bool = True
     log_gradients: bool = True
     log_optimizer_states: bool = True
-    log_gates: bool = False  # Log ACG and alpha-dependent gates
+    log_activations: bool = False  # Log activation norms after each layer's residual update
     # Optional: limit to specific parameter patterns
     include_patterns: Optional[List[str]] = None
     exclude_patterns: Optional[List[str]] = None
@@ -60,7 +60,7 @@ class ParameterStatsLogger:
                 log_parameters=config.log_parameters,
                 log_gradients=config.log_gradients,
                 log_optimizer_states=config.log_optimizer_states,
-                log_gates=getattr(config, 'log_gates', False),  # New field, default False for backward compat
+                log_activations=getattr(config, 'log_activations', False),  # Activation norm logging
                 include_patterns=config.include_patterns,
                 exclude_patterns=config.exclude_patterns,
             )
@@ -225,48 +225,58 @@ class ParameterStatsLogger:
 
         return optimizer_stats
 
-    def _compute_gate_stats(self) -> Dict[str, Any]:
-        """
-        Compute gate statistics for ACG, ACG_all, and alpha-dependent gates.
 
-        Returns:
-            Dictionary of gate metrics
-        """
-        if not self.config.log_gates or not self.model_parts:
+    def _compute_parameter_count(self) -> Dict[str, Any]:
+        """Compute total and trainable parameter counts from model parts."""
+        if not self.model_parts:
             return {}
 
-        gate_stats = {}
-
-        # Iterate through model parts (typically just one for non-PP)
+        total_params = 0
+        trainable_params = 0
         for model in self.model_parts:
-            # Alpha-dependent gates (per-layer residual gating)
-            if hasattr(model, 'layers'):
-                for layer_id, layer in enumerate(model.layers):
-                    # Attention residual gate
-                    if (hasattr(layer, 'attn_update') and
-                        hasattr(layer.attn_update, 'alpha_dependent') and
-                        layer.attn_update.alpha_dependent and
-                        hasattr(layer.attn_update, 'last_gate_values') and
-                        layer.attn_update.last_gate_values is not None):
+            for param in model.parameters():
+                total_params += param.numel()
+                if param.requires_grad:
+                    trainable_params += param.numel()
 
-                        gate_flat = layer.attn_update.last_gate_values.squeeze(-1).flatten()
-                        if gate_flat.numel() > 0:
-                            gate_stats[f'gating/train_attn_layer_{layer_id}/mean'] = gate_flat.mean().item()
-                            gate_stats[f'gating/train_attn_layer_{layer_id}/std'] = gate_flat.std().item()
+        return {
+            'parameter_count/total': float(total_params),
+            'parameter_count/trainable': float(trainable_params),
+        }
 
-                    # FFN residual gate
-                    if (hasattr(layer, 'ffn_update') and
-                        hasattr(layer.ffn_update, 'alpha_dependent') and
-                        layer.ffn_update.alpha_dependent and
-                        hasattr(layer.ffn_update, 'last_gate_values') and
-                        layer.ffn_update.last_gate_values is not None):
+    def _compute_activation_stats(self) -> Dict[str, Any]:
+        """Compute activation norm statistics from model forward pass.
 
-                        gate_flat = layer.ffn_update.last_gate_values.squeeze(-1).flatten()
-                        if gate_flat.numel() > 0:
-                            gate_stats[f'gating/train_ffn_layer_{layer_id}/mean'] = gate_flat.mean().item()
-                            gate_stats[f'gating/train_ffn_layer_{layer_id}/std'] = gate_flat.std().item()
+        Collects mean L2 norms of latent vectors after each layer's residual update.
+        Requires the model to have activation logging enabled via set_activation_logging(True).
+        """
+        if not self.config.log_activations:
+            return {}
 
-        return gate_stats
+        activation_stats = {}
+        for model in self.model_parts:
+            # Check if model supports activation logging (anGPT Transformer)
+            if hasattr(model, 'get_activation_norms'):
+                norms = model.get_activation_norms()
+                for layer_name, norm_value in norms.items():
+                    activation_stats[f'activations/{layer_name}/mean_norm'] = norm_value.item() if isinstance(norm_value, torch.Tensor) else norm_value
+        return activation_stats
+
+    def enable_model_activation_logging(self) -> None:
+        """Enable activation logging on all model parts that support it."""
+        if not self.config.log_activations or not self.model_parts:
+            return
+        for model in self.model_parts:
+            if hasattr(model, 'set_activation_logging'):
+                model.set_activation_logging(True)
+
+    def disable_model_activation_logging(self) -> None:
+        """Disable activation logging on all model parts."""
+        if not self.model_parts:
+            return
+        for model in self.model_parts:
+            if hasattr(model, 'set_activation_logging'):
+                model.set_activation_logging(False)
 
     def compute_stats(self, step: int) -> Dict[str, Any]:
         """
@@ -295,9 +305,14 @@ class ParameterStatsLogger:
         optimizer_stats = self._compute_optimizer_stats()
         all_stats.update(optimizer_stats)
 
-        # Compute gate statistics
-        gate_stats = self._compute_gate_stats()
-        all_stats.update(gate_stats)
+        # Compute activation norm statistics
+        activation_stats = self._compute_activation_stats()
+        all_stats.update(activation_stats)
+
+        # Log parameter counts (only on first log since they don't change)
+        if self.last_log_step == -1:
+            param_count_stats = self._compute_parameter_count()
+            all_stats.update(param_count_stats)
 
         # Track last log step
         self.last_log_step = step

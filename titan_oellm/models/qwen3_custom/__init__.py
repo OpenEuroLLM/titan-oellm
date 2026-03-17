@@ -21,8 +21,6 @@ from torchtitan.models.moe import MoEArgs
 from titan_oellm.datasets.sci_dataloader import build_sci_dataloader
 from titan_oellm.datasets.sci_tokenizers.sci_tokenizer import build_sci_hf_tokenizer
 
-from torchtitan.distributed.pipeline_parallel import pipeline_llm
-
 from .infra.parallelize import parallelize_qwen3_custom
 from .model.args import Qwen3CustomModelArgs
 from .model.model import Qwen3Model
@@ -67,6 +65,21 @@ qwen3_custom_configs = {
         qk_norm=True,
         max_seq_len=8192,
         depth_init=True,
+    ),
+    "125M768": Qwen3CustomModelArgs(
+        dim=768,
+        n_layers=12,
+        n_heads=12,
+        n_kv_heads=6,
+        head_dim=64,
+        hidden_dim=3072,
+        norm_eps=1e-6,
+        rope_theta=500000,
+        vocab_size=151936,
+        qk_norm=True,
+        max_seq_len=4096,
+        depth_init=True,
+        enable_weight_tying=True,
     ),
     "130Msci": Qwen3CustomModelArgs(
         dim=576,
@@ -123,6 +136,20 @@ qwen3_custom_configs = {
         rope_theta=1000000,
         qk_norm=True,
         max_seq_len=32768,
+        depth_init=True,
+    ),
+    "1.7Bsci": Qwen3CustomModelArgs(
+        dim=2048,
+        n_layers=24,
+        n_heads=32,
+        n_kv_heads=32,
+        vocab_size=151936,
+        head_dim=64,
+        hidden_dim=8192,
+        norm_eps=1e-6,
+        rope_theta=1000000,
+        qk_norm=True,
+        max_seq_len=4096,
         depth_init=True,
     ),
     "4B": Qwen3CustomModelArgs(
@@ -250,7 +277,7 @@ qwen3_moe_configs = {
 
 
 # Merge baseline and MoE configs
-qwen3_custom_configs = {**qwen3_baseline_configs, **qwen3_moe_configs}
+qwen3_custom_configs = {**qwen3_custom_configs, **qwen3_moe_configs}
 
 
 def get_train_spec() -> TrainSpec:
@@ -268,7 +295,7 @@ def get_train_spec() -> TrainSpec:
         model_cls=Qwen3Model,
         model_args=qwen3_custom_configs,
         parallelize_fn=parallelize_qwen3_custom,
-        pipelining_fn=pipeline_llm,  # Standard torchtitan v0.2.0 pipeline
+        pipelining_fn=None,
         build_optimizers_fn=build_optimizers,  # Standard optimizer (AdamW)
         build_lr_schedulers_fn=build_lr_schedulers_auto,  # Universal LR scheduler
         build_dataloader_fn=build_sci_dataloader,  # Sci dataloader with MMap support

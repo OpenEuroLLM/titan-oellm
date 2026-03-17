@@ -40,11 +40,11 @@ class SciData:
     min_doc_len: int = 10
     """Minimum document length"""
 
-    data_prefix: str = ""
-    """Data prefix path for MMapDataset"""
+    data_prefix: list[str] | str = ""
+    """Data prefix path(s) for MMapDataset, or chunk directory(ies) for chunk-based dataloaders."""
 
-    chunks_dir: str = ""
-    """Directory containing data chunks for ChunkedMMapDataset"""
+    chunks_dir: list[str] | str = ""
+    """Directory(ies) containing data chunks for ChunkedMMapDataset / DeterministicPackedDataset"""
 
     dataloader: str = "MMapDataset"
     """Type of dataloader to use: 'MMapDataset', 'DeterministicPackedDataset', or 'ChunkedMMapDataset'"""
@@ -344,15 +344,23 @@ class Model(BaseModel):
     attn_mask_type: str = "causal"
     """Attention mask type: 'causal' (standard) or 'block_causal' (document-aware)"""
 
-    # Flash Attention parameters
-    use_flash_attn: bool = False
-    """Enable direct Flash Attention 2/3 (auto-selects FA3 on Hopper, FA2 otherwise)"""
+    # Attention Gating parameters (gpt_plus)
+    attn_gate_type: str = "none"
+    """Attention gate type: 'none', 'scalar', 'elementwise_dense', 'elementwise_lowrank'"""
+    attn_gate_input: str = "x"
+    """Gate input: 'x' (input to attention) or 'xv' (value vector)"""
+    attn_gate_activation: str = "sigmoid"
+    """Activation: 'sigmoid' or 'tanh_sq'"""
+    attn_gate_lowrank_dim: int = 64
+    """Low-rank dimension for elementwise_lowrank gate type"""
+    attn_gate_bias: bool = True
+    """Whether to use bias in gate linear layers"""
 
-    # Qwen3-specific parameters
-    qk_norm: bool = True
-    """Enable QK normalization in attention (Qwen3)"""
-    rope_theta: float = 1000000
-    """RoPE theta value for rotary embeddings (Qwen3)"""
+    # Qwen3-specific parameters (None = use flavor value)
+    qk_norm: bool | None = None
+    """Enable QK normalization in attention (Qwen3). None = use flavor value."""
+    rope_theta: float | None = None
+    """RoPE theta value for rotary embeddings (Qwen3). None = use flavor value."""
 
     # RoPE scaling parameters (gpt_plus and other models supporting long context)
     rope_scaling_factor: float = 8.0
@@ -364,20 +372,22 @@ class Model(BaseModel):
     rope_original_max_position_embeddings: int = 8192
     """Original maximum position embeddings before scaling (default: 8192)"""
 
-    head_dim: int = 128
-    """Dimension per attention head (Qwen3)"""
-    hidden_dim: int = 3072
-    """FFN hidden dimension (Qwen3)"""
-    norm_eps: float = 1e-6
-    """Layer normalization epsilon (Qwen3)"""
-    depth_init: bool = True
-    """Use depth-dependent initialization (Qwen3)"""
-    enable_weight_tying: bool = False
-    """Tie embedding and output head weights (Qwen3)"""
-    moe_enabled: bool = False
-    """Enable Mixture of Experts (Qwen3 MoE variants)"""
-    moe_inter_dim: int = 768
-    """MoE intermediate dimension (Qwen3 MoE variants)"""
+    head_dim: int | None = None
+    """Dimension per attention head (Qwen3). None = use flavor value."""
+    hidden_dim: int | None = None
+    """FFN hidden dimension (Qwen3). None = use flavor value."""
+    norm_eps: float | None = None
+    """Layer normalization epsilon (Qwen3). None = use flavor value."""
+    depth_init: bool | None = None
+    """Use depth-dependent initialization (Qwen3). None = use flavor value."""
+    enable_weight_tying: bool | None = None
+    """Tie embedding and output head weights (Qwen3). None = use flavor value."""
+    use_complex_rope: bool | None = None
+    """Complex-mul RoPE (interleaved pairing, fewer intermediates). None = use flavor value."""
+    moe_enabled: bool | None = None
+    """Enable Mixture of Experts. None = use flavor value."""
+    moe_inter_dim: int | None = None
+    """MoE intermediate dimension. None = use flavor value."""
 
 
 @dataclass

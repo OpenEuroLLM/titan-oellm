@@ -8,8 +8,11 @@ This module provides a validator compatible with torchtitan v0.2.0's validation
 interface while using titan_oellm's custom validation dataloader.
 """
 
+import json
 import math
-from typing import Generator
+from dataclasses import fields, is_dataclass, replace
+from pathlib import Path
+from typing import Generator, Dict, List, Optional, Set
 
 import torch
 import torch.nn as nn
@@ -93,7 +96,7 @@ def _compute_spearman_correlation(x: torch.Tensor, y: torch.Tensor) -> float:
     denominator = torch.sqrt((x_centered ** 2).sum() * (y_centered ** 2).sum())
 
     if denominator == 0:
-        return float('nan')
+        return float("nan")
 
     correlation = numerator / denominator
     return correlation.item()
@@ -130,7 +133,7 @@ def _compute_auc_roc(y_true: torch.Tensor, y_score: torch.Tensor) -> float:
 
     if n_pos == 0 or n_neg == 0:
         # AUC is undefined if only one class present
-        return float('nan')
+        return float("nan")
 
     # Count pairs where positive score > negative score (correct ranking)
     # and pairs where they're equal (ties)
@@ -193,20 +196,19 @@ class SciValidator(BaseValidator):
         self.pp_has_first_stage = pp_has_first_stage
         self.pp_has_last_stage = pp_has_last_stage
 
-        # Cache the dataloader config for consistent reset
-        self._validation_dataloader_config = {
-            'dp_world_size': dp_world_size,
-            'dp_rank': dp_rank,
-            'tokenizer': tokenizer,
-            'job_config': job_config,
+        # Cache base dataloader config for consistent reset/benchmarking
+        self._base_validation_dataloader_config = {
+            "dp_world_size": dp_world_size,
+            "dp_rank": dp_rank,
+            "tokenizer": tokenizer,
+            "job_config": job_config,
         }
-
-        # Build sci validation dataloader
-        self.validation_dataloader = build_sci_validation_dataloader(**self._validation_dataloader_config)
+        self._validation_sets = self._build_validation_sets()
+        self.validation_dataloader = self._validation_sets[0]["dataloader"]
 
         logger.info(
             f"SciValidator: validation enabled with freq={job_config.validation.freq}, "
-            f"max_eval_samples={job_config.validation.max_eval_samples}"
+            f"datasets={len(self._validation_sets)}"
         )
 
     def should_validate(self, step: int) -> bool:
@@ -225,11 +227,66 @@ class SciValidator(BaseValidator):
         Returns:
             True if validation should run, False otherwise
         """
-        return (
-            step == 1 or
-            step % self.job_config.validation.freq == 0 or
-            step == self.job_config.training.steps
-        )
+        return step % self.job_config.validation.freq == 0 or step == self.job_config.training.steps
+
+    def _merge_validation_overrides(self, base_config, override_config):
+        if override_config is None or not is_dataclass(override_config):
+            return base_config
+
+        overrides = {}
+        for f in fields(override_config):
+            if f.name == "name":
+                continue
+            value = getattr(override_config, f.name)
+            if value is not None:
+                overrides[f.name] = value
+
+        if not overrides:
+            return base_config
+        return replace(base_config, **overrides)
+
+    def _build_validation_sets(self) -> list[dict]:
+        validation = self.job_config.validation
+        datasets = getattr(validation, "datasets", [])
+        validation_sets = []
+
+        if datasets:
+            for idx, dataset_cfg in enumerate(datasets):
+                if isinstance(dataset_cfg, dict):
+                    try:
+                        from titan_sci.configs.sci_job_config import ValidationDataset
+
+                        dataset_cfg = ValidationDataset(**dataset_cfg)
+                    except Exception as exc:
+                        logger.warning(f"Failed to parse validation dataset override: {exc}")
+                dataset_name = getattr(dataset_cfg, "name", "") or f"dataset_{idx}"
+                merged_validation = self._merge_validation_overrides(validation, dataset_cfg)
+                dataset_job_config = replace(self.job_config, validation=merged_validation)
+                dataloader_config = {
+                    **self._base_validation_dataloader_config,
+                    "job_config": dataset_job_config,
+                }
+                dataloader = build_sci_validation_dataloader(**dataloader_config)
+                validation_sets.append(
+                    {
+                        "name": dataset_name,
+                        "config": dataloader_config,
+                        "validation": merged_validation,
+                        "dataloader": dataloader,
+                    }
+                )
+        else:
+            dataloader = build_sci_validation_dataloader(**self._base_validation_dataloader_config)
+            validation_sets.append(
+                {
+                    "name": "default",
+                    "config": self._base_validation_dataloader_config,
+                    "validation": validation,
+                    "dataloader": dataloader,
+                }
+            )
+
+        return validation_sets
 
     def _reset_validation_dataloader(self) -> None:
         """

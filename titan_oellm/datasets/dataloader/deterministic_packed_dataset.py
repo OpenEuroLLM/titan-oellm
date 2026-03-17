@@ -16,9 +16,15 @@ For best-fit bin-packing (reduced token waste), see BestFitPackedDataset.
 Design:
   - Hierarchical index: per-chunk cumulative token counts (32 KB) +
     per-document lengths from .idx files (lazy, mmap'd).
-  - Sequential I/O within chunks is preserved.
   - Checkpointing is trivial: just one integer (global_sequence_id).
   - Scales to 1-10T tokens, 100-4000 GPUs, global_batch_size up to 16M.
+
+Batch diversity via strided assignment:
+  Step S's global batch = {S + k*E : k=0..GBS-1} where E = steps_per_epoch.
+  Each rank reads SPR "lanes", each advancing by 1 sequence per step.
+  This spreads every batch across the full epoch (different chunks),
+  while each lane reads sequentially through its region of the stream.
+  The batch composition depends only on GBS, not dp_world_size.
 """
 
 import logging
@@ -63,7 +69,7 @@ class DeterministicPackedDataset(torch.utils.data.IterableDataset):
 
     def __init__(
         self,
-        chunks_dir: str,
+        chunks_dir: str | list[str],
         dp_world_size: int,
         dp_rank: int,
         global_batch_size: int,
@@ -77,7 +83,11 @@ class DeterministicPackedDataset(torch.utils.data.IterableDataset):
     ) -> None:
         super().__init__()
 
-        self.chunks_dir = Path(chunks_dir)
+        if isinstance(chunks_dir, list):
+            self.chunks_dirs = [Path(d) for d in chunks_dir]
+        else:
+            self.chunks_dirs = [Path(chunks_dir)]
+        self.chunks_dir = self.chunks_dirs[0]  # kept for logging / back-compat
         self.dp_world_size = dp_world_size
         self.dp_rank = dp_rank
         self.global_batch_size = global_batch_size
@@ -102,7 +112,8 @@ class DeterministicPackedDataset(torch.utils.data.IterableDataset):
         # Discover all chunks
         self.all_chunks = self._get_chunk_prefixes()
         num_chunks = len(self.all_chunks)
-        logger.info(f"Found {num_chunks} total chunks in {self.chunks_dir}")
+        dirs_str = self.chunks_dirs[0] if len(self.chunks_dirs) == 1 else self.chunks_dirs
+        logger.info(f"Found {num_chunks} total chunks in {dirs_str}")
 
         # Read per-chunk document lengths and compute effective token counts
         self._all_chunk_doc_lengths = self._read_all_chunk_doc_lengths()
@@ -115,12 +126,11 @@ class DeterministicPackedDataset(torch.utils.data.IterableDataset):
         self.global_sequence_id = 0
         self.sample_counter = 0
 
-        # Currently loaded chunk(s) and their cached data
+        # Currently loaded chunk(s) and their cached data.
+        # With strided batch assignment, each rank reads from up to SPR
+        # different chunks per step — cache must accommodate all of them.
         self._loaded_chunks: Dict[int, _ChunkData] = {}
-        self._max_loaded_chunks = 3  # keep at most 3 chunks loaded
-
-        # Seek to initial position
-        self._current_token_pos = self.dp_rank * self.sequences_per_rank * self.tokens_per_seq
+        self._max_loaded_chunks = max(8, self.sequences_per_rank + 2)
 
         # Log info
         split_info = ""
@@ -144,25 +154,25 @@ class DeterministicPackedDataset(torch.utils.data.IterableDataset):
     # ── Chunk discovery ──────────────────────────────────────────────────
 
     def _get_chunk_prefixes(self) -> List[str]:
-        """Discover all available chunk files, sorted for deterministic ordering."""
-        if not self.chunks_dir.exists():
-            raise FileNotFoundError(f"Chunks directory not found: {self.chunks_dir}")
-
-        idx_files = list(self.chunks_dir.glob("chunk_*.idx"))
+        """Discover all available chunk files across all chunks_dirs, sorted for deterministic ordering."""
         all_chunks = []
 
-        for idx_file in idx_files:
-            chunk_prefix = str(idx_file).replace('.idx', '')
-            bin_file = Path(f"{chunk_prefix}.bin")
-            if bin_file.exists():
-                all_chunks.append(chunk_prefix)
-            else:
-                logger.warning(f"Missing .bin file for {idx_file}")
+        for chunks_dir in self.chunks_dirs:
+            if not chunks_dir.exists():
+                raise FileNotFoundError(f"Chunks directory not found: {chunks_dir}")
+
+            for idx_file in chunks_dir.glob("chunk_*.idx"):
+                chunk_prefix = str(idx_file).replace('.idx', '')
+                bin_file = Path(f"{chunk_prefix}.bin")
+                if bin_file.exists():
+                    all_chunks.append(chunk_prefix)
+                else:
+                    logger.warning(f"Missing .bin file for {idx_file}")
 
         all_chunks.sort()
 
         if not all_chunks:
-            raise RuntimeError(f"No valid chunk pairs found in {self.chunks_dir}")
+            raise RuntimeError(f"No valid chunk pairs found in {self.chunks_dirs}")
         return all_chunks
 
     # ── Per-chunk metadata ───────────────────────────────────────────────
@@ -245,7 +255,7 @@ class DeterministicPackedDataset(torch.utils.data.IterableDataset):
     # ── Chunk loading with cache ─────────────────────────────────────────
 
     def _get_chunk_data(self, chunk_id: int) -> '_ChunkData':
-        """Get loaded chunk data, loading if necessary. LRU cache of loaded chunks."""
+        """Get loaded chunk data, loading if necessary. FIFO cache of loaded chunks."""
         if chunk_id in self._loaded_chunks:
             return self._loaded_chunks[chunk_id]
 
@@ -394,6 +404,10 @@ class DeterministicPackedDataset(torch.utils.data.IterableDataset):
         # Adjust last seqlen if total doesn't match exactly
         total_seqlen = sum(seqlens) if seqlens else 0
         if total_seqlen != len(sequence) and seqlens:
+            logger.warning(
+                f"Seqlen fixup: sum(seqlens)={total_seqlen} != len(sequence)={len(sequence)}, "
+                f"adjusting last seqlen by {total_seqlen - len(sequence)}"
+            )
             seqlens[-1] = seqlens[-1] - (total_seqlen - len(sequence))
 
         return {
@@ -407,35 +421,39 @@ class DeterministicPackedDataset(torch.utils.data.IterableDataset):
         return self
 
     def __next__(self) -> Dict[str, Any]:
-        # Compute which global sequence this rank should read
+        # Strided batch assignment for diversity + dp_world_size independence.
+        #
+        # The global batch at step S consists of GBS sequences evenly spaced
+        # across the epoch: {S + k*E : k = 0, ..., GBS-1} where E = steps_per_epoch.
+        # This set is identical regardless of dp_world_size (depends only on GBS).
+        #
+        # Rank R reads SPR of these (its "lanes"), each advancing by 1 per step.
+        # Over time each lane reads sequentially through its region of the stream.
         local_offset = self.global_sequence_id % self.sequences_per_rank
+        step = self.global_sequence_id // self.sequences_per_rank
 
-        if local_offset == 0:
-            step = self.global_sequence_id // self.sequences_per_rank
-            if step >= self.steps_per_epoch:
-                if self.infinite:
-                    self.epoch_counter += 1
-                    self._setup_global_ordering(self.epoch_counter)
-                    self.global_sequence_id = 0
-                    step = 0
-                    logger.info(
-                        f"Rank {self.dp_rank}: starting epoch {self.epoch_counter}"
-                    )
-                else:
-                    raise StopIteration
+        if local_offset == 0 and step >= self.steps_per_epoch:
+            if self.infinite:
+                self.epoch_counter += 1
+                self._setup_global_ordering(self.epoch_counter)
+                self.global_sequence_id = 0
+                step = 0
+                local_offset = 0
+                logger.info(
+                    f"Rank {self.dp_rank}: starting epoch {self.epoch_counter}"
+                )
+            else:
+                raise StopIteration
 
-            # Compute global token position for this rank's first sequence in this step
-            global_seq_start = (
-                step * self.global_batch_size
-                + self.dp_rank * self.sequences_per_rank
-            )
-            self._current_token_pos = global_seq_start * self.tokens_per_seq
+        # Lane index within the global batch: [0, GBS)
+        batch_position = self.dp_rank * self.sequences_per_rank + local_offset
+        # Map to global sequence via stride: each lane is spaced E apart
+        global_seq = step + batch_position * self.steps_per_epoch
+        token_pos = global_seq * self.tokens_per_seq
 
         # Read the packed sequence
-        sample = self._read_packed_sequence(self._current_token_pos)
+        sample = self._read_packed_sequence(token_pos)
 
-        # Advance
-        self._current_token_pos += self.tokens_per_seq
         self.global_sequence_id += 1
         self.sample_counter += 1
 
@@ -458,6 +476,24 @@ class DeterministicPackedDataset(torch.utils.data.IterableDataset):
         """Restore state and reinitialize."""
         self.__dict__.update(state)
         self._loaded_chunks = {}
+
+    # ── Stateful protocol (for StatefulDataLoader checkpoint support) ────
+
+    def state_dict(self) -> Dict[str, Any]:
+        """Save minimal state for fast checkpoint resume."""
+        return {
+            "global_sequence_id": self.global_sequence_id,
+            "epoch_counter": self.epoch_counter,
+            "sample_counter": self.sample_counter,
+        }
+
+    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
+        """Restore position from checkpoint — no fast-forwarding needed."""
+        self.epoch_counter = state_dict["epoch_counter"]
+        self.global_sequence_id = state_dict["global_sequence_id"]
+        self.sample_counter = state_dict.get("sample_counter", 0)
+        # Re-setup global ordering for the restored epoch
+        self._setup_global_ordering(self.epoch_counter)
 
     # ── Stats / info ─────────────────────────────────────────────────────
 
