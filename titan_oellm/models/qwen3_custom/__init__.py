@@ -16,6 +16,7 @@ from titan_oellm.components.metrics_with_parameter_logging import build_metrics_
 from titan_oellm.components.validator import build_sci_validator
 
 from torchtitan.protocols.train_spec import register_train_spec, TrainSpec
+from torchtitan.models.moe import MoEArgs
 
 from titan_oellm.datasets.sci_dataloader import build_sci_dataloader
 from titan_oellm.datasets.sci_tokenizers.sci_tokenizer import build_sci_hf_tokenizer
@@ -66,6 +67,21 @@ qwen3_custom_configs = {
         qk_norm=True,
         max_seq_len=8192,
         depth_init=True,
+    ),
+    "130Msci": Qwen3CustomModelArgs(
+        dim=576,
+        n_layers=18,
+        n_heads=9,
+        n_kv_heads=9,
+        head_dim=64,
+        hidden_dim=2304,
+        norm_eps=1e-6,
+        rope_theta=500000,
+        vocab_size=50432,
+        qk_norm=True,
+        max_seq_len=4096,
+        depth_init=True,
+        enable_weight_tying=True,
     ),
     "0.5B": Qwen3CustomModelArgs(
         dim=896,
@@ -166,6 +182,75 @@ qwen3_custom_configs = {
         depth_init=True,
     ),
 }
+
+
+# MoE Qwen3 variants for MoE experiments
+def _qwen3_moe_args(
+    num_experts: int = 32,
+    top_k: int = 8,
+    score_func: str = "softmax",
+    route_norm: bool = True,
+) -> MoEArgs:
+    return MoEArgs(
+        num_experts=num_experts,
+        num_shared_experts=0,
+        top_k=top_k,
+        score_func=score_func,
+        route_norm=route_norm,
+        route_scale=1.0,
+        score_before_experts=False,
+    )
+
+
+qwen3_moe_configs = {
+    "debugmodel_moe": Qwen3CustomModelArgs(
+        dim=256,
+        n_layers=8,
+        n_heads=16,
+        n_kv_heads=8,
+        vocab_size=50432,  # neox vocab padded to multiple of 64 (actual tokens: 50277)
+        head_dim=128,
+        hidden_dim=1024,
+        norm_eps=1e-6,
+        rope_theta=1000000,
+        qk_norm=True,
+        max_seq_len=4096,
+        depth_init=True,
+        moe_enabled=True,
+        moe_inter_dim=512,
+        moe_args=_qwen3_moe_args(
+            num_experts=64,
+            top_k=8,
+        ),
+    ),
+    "600M-A60M": Qwen3CustomModelArgs(
+        dim=512,
+        n_layers=16,
+        n_heads=8,
+        n_kv_heads=4,
+        vocab_size=151936,
+        head_dim=128,
+        hidden_dim=2048,
+        norm_eps=1e-6,
+        rope_theta=1000000,
+        qk_norm=True,
+        max_seq_len=4096,
+        depth_init=True,
+        # MoE configuration for ~600M total / ~60M active
+        moe_enabled=True,
+        moe_inter_dim=512,
+        moe_args=_qwen3_moe_args(
+            num_experts=32,
+            top_k=8,
+            score_func="softmax",
+            route_norm=True,
+        ),
+    ),
+}
+
+
+# Merge baseline and MoE configs
+qwen3_custom_configs = {**qwen3_baseline_configs, **qwen3_moe_configs}
 
 
 def get_train_spec() -> TrainSpec:

@@ -1,9 +1,9 @@
 # Qwen3 Custom Model for Titan-Sci
 
-This is a custom Qwen3 model implementation integrated with the titan-sci training infrastructure. It supports:
+This is a custom Qwen3 model implementation integrated with the titan-oellm training infrastructure. It supports:
 
 - **Loading pretrained Qwen3 weights from HuggingFace** for fine-tuning or continual pretraining
-- **Full titan-sci integration**: sci_dataloader, universal LR schedulers, validation, parameter logging
+- **Full titan-oellm integration**: sci_dataloader, universal LR schedulers, validation, parameter logging
 - **Architecture customization**: Modify the Qwen3 architecture while loading compatible weights
 - **All Qwen3 model sizes**: 0.5B, 0.6B, 1.7B, 4B, 8B, 14B, 32B (dense and MoE variants)
 
@@ -104,7 +104,7 @@ initial_load_path = "./assets/hf/Qwen3-0.6B"  # Path to HF checkpoint directory
    - etc.
 
 2. **`initial_load_model_only = true`** ensures only model weights are loaded (not optimizer state)
-   - Set to `false` if resuming from a titan-sci checkpoint with optimizer state
+   - Set to `false` if resuming from a titan-oellm checkpoint with optimizer state
 
 3. **`initial_load_path`** can be:
    - Absolute path: `/path/to/Qwen3-0.6B`
@@ -120,7 +120,7 @@ python train.py --job.config_file=configs/qwen3_custom.toml
 The training script will:
 1. Detect the `initial_load_in_hf=true` flag
 2. Load weights from the HF checkpoint using `Qwen3StateDictAdapter`
-3. Convert the HF state dict format to titan-sci format
+3. Convert the HF state dict format to titan-oellm format
 4. Initialize the model with pretrained weights
 5. Start training (fine-tuning or continual pretraining)
 
@@ -241,7 +241,7 @@ You can modify the Qwen3 architecture while loading compatible pretrained weight
 
 ## Titan-Sci Integration
 
-The qwen3_custom model is fully integrated with titan-sci infrastructure:
+The qwen3_custom model is fully integrated with titan-oellm infrastructure:
 
 ### Dataloader: sci_dataloader
 

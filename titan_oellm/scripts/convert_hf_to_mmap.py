@@ -1,6 +1,6 @@
 """Convert HuggingFace dataset to MMap format (bin/idx) for SFT training.
 
-This script converts HuggingFace datasets to the MMap format used by titan-sci's
+This script converts HuggingFace datasets to the MMap format used by titan-oellm's
 MMapDataset for efficient random-access training.
 
 Usage:
@@ -158,7 +158,7 @@ def convert_hf_to_mmap(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Convert HuggingFace dataset to MMap format for titan-sci training",
+        description="Convert HuggingFace dataset to MMap format for titan-oellm training",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
