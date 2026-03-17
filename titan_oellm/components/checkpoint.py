@@ -1,6 +1,6 @@
 import torchtitan.train as _torchtitan_train
 
-from torchtitan.components import CheckpointManager as BaseCheckpointManager
+from torchtitan.components.checkpoint import CheckpointManager as BaseCheckpointManager
 
 
 class CheckpointManager(BaseCheckpointManager):

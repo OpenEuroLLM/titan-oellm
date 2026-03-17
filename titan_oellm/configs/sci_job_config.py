@@ -557,6 +557,7 @@ class JobConfig(BaseJobConfig):
     training: Training = field(default_factory=Training)
     lr_scheduler: LRScheduler = field(default_factory=LRScheduler)
     parallelism: Parallelism = field(default_factory=Parallelism)
+    checkpoint: Checkpoint = field(default_factory=Checkpoint)  # Override to add extra_steps
     validation: Validation = field(default_factory=Validation)  # Override base Validation with custom implementation
     compile: Compile = field(default_factory=Compile)  # Override to add mode
 
