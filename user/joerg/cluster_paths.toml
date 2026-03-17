@@ -23,6 +23,10 @@ cache_base = "/home/joerg/workspace/cache"
 output_dir = "/p/scratch/projectnucleus/franke5/experiments"
 cache_base = "/p/scratch/projectnucleus/franke5/cache"
 
+["cluster.jupiter"]
+output_dir = "/e/scratch/laionize/franke5/experiments"
+cache_base = "/e/scratch/laionize/franke5/cache"
+
 ["cluster.capella"]
 output_dir = "/data/cat/ws/jrfr770h-titan/experiments"
 cache_base = "/data/cat/ws/jrfr770h-titan/cache"
@@ -41,6 +45,12 @@ path = "/p/project1/transfernetx/franke5/data/tokenizer/neox"
 
 ["tokenizer.nemotron.juwels"]
 path = "/p/project1/transfernetx/franke5/data/tokenizer/nemotron"
+
+["tokenizer.neox.jupiter"]
+path = "/e/project1/projectnucleus/franke5/data/tokenizer/neox"
+
+["tokenizer.nemotron.jupiter"]
+path = "/e/project1/projectnucleus/franke5/data/tokenizer/nemotron"
 
 ["tokenizer.neox.capella"]
 path = "/data/cat/ws/jrfr770h-titan/data/tokenizer/neox"
@@ -83,6 +93,27 @@ dataloader = "ChunkedMMapDataset"
 min_doc_len = 128
 
 
+["dataset.nemotron_oellm.neox.jupiter"]
+train_chunks = "/e/project1/laionize/franke5/data/datasets/noex_nemotron_oellm/chunks"
+validation_prefix = "/e/project1/laionize/franke5/data/datasets/noex_nemotron_oellm/validation"
+train_prefix = "/e/project1/laionize/franke5/data/datasets/noex_nemotron_oellm/chunks/chunk_0000"
+dataloader = "ChunkedMMapDataset"
+min_doc_len = 128
+
+["dataset.slimpajama_627b.neox.jupiter"]
+train_prefix = "/e/project1/projectnucleus/franke5/data/datasets/cerebras-SlimPajama-627B/train/merged"
+train_chunks = "/e/project1/projectnucleus/franke5/data/datasets/cerebras-SlimPajama-627B/train/chunks"
+validation_prefix = "/e/project1/projectnucleus/franke5/data/datasets/cerebras-SlimPajama-627B/validation/merged"
+dataloader = "ChunkedMMapDataset"
+min_doc_len = 128
+
+["dataset.nemotron_cc.neox.jupiter"]
+train_chunks = "/e/project1/projectnucleus/franke5/data/datasets/neox_neomotron_cc_v1"
+validation_prefix = "/e/project1/projectnucleus/franke5/data/datasets/neox_neomotron_cc_v1/chunk_0000"
+train_prefix = "/e/project1/projectnucleus/franke5/data/datasets/neox_neomotron_cc_v1/chunk_0000"
+dataloader = "ChunkedMMapDataset"
+min_doc_len = 128
+
 ["dataset.slimpajama_627b.neox.capella"]
 train_prefix = "/data/cat/ws/jrfr770h-titan/data/cerebras-SlimPajama-627B/train/merged"
 train_chunks = "/data/cat/ws/jrfr770h-titan/data/cerebras-SlimPajama-627B/train/chunks"
@@ -106,6 +137,9 @@ min_doc_len = 128
 
 ["benchmarks.neox.local"]
 path = "/home/joerg/workspace/data/benchmarks/neox"
+
+["benchmarks.neox.jupiter"]
+path = "/e/project1/projectnucleus/franke5/data/benchmarks/neox"
 
 ["benchmarks.neox.juwels"]
 path = "/p/project1/transfernetx/franke5/data/benchmarks/neox"

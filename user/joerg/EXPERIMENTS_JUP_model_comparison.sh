@@ -10,7 +10,7 @@
 #
 # Compute: 4 nodes (16 GPUs), lbs=16, GBS=256, seq_len=4096
 #          ~1.05M tokens/step, 19000 steps ≈ 20B tokens
-# Dataset: openwebtext with neox tokenizer
+# Dataset: nemotron_oellm with neox tokenizer
 
 set -euo pipefail
 
@@ -76,7 +76,7 @@ echo ""
 # --- 01. gpt_plus 130Msci ---
 echo "Submitting: 01_gpt_plus_130Msci"
 TITAN_USER=joerg \
-DATASET=openwebtext \
+DATASET=nemotron_oellm \
 TOKENIZER=neox \
 CONFIG=gpt_plus.toml \
 bash submit_job.sh \
@@ -92,7 +92,7 @@ bash submit_job.sh \
 # --- 02. qwen3_custom 130Msci ---
 echo "Submitting: 02_qwen3_custom_130Msci"
 TITAN_USER=joerg \
-DATASET=openwebtext \
+DATASET=nemotron_oellm \
 TOKENIZER=neox \
 CONFIG=qwen3_custom.toml \
 bash submit_job.sh \
