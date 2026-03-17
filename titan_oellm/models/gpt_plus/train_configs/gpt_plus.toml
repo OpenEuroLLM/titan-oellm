@@ -1,0 +1,141 @@
+# Base Configuration for gpt_plus model
+# This is a unified config for all clusters - paths are injected via cluster_config.py
+# Use with: python train.py --job.config_file=configs/gpt_plus.toml <cluster-specific-args>
+
+[job]
+dump_folder = "./outputs/torchtitan"
+description = "TorchTitan training for gpt_plus model"
+custom_config_module = "titan_oellm.configs.oellm_job_config"
+
+[model]
+name = "gpt_plus"
+flavor = "0.5B"
+vocab_size = 50432  # Vocabulary size for embedding and output layers (must match tokenizer)
+# tokenizer_path is injected by cluster_config
+qk_norm_type = "RMSNorm"  # "QKNormPlus" or "RMSNorm"
+mlp_layers = 2  # Number of MLP layers: 2, 3, or 4
+mlp_activation = "swiglu"  # MLP activation: "swiglu" (gated) or "silu" (ungated)
+tie_embedding = false  # Tie embedding and output head weights (reduces params by vocab_size × dim)
+
+# FlexAttention for document-aware masking
+use_flex_attn = false  # Set to true for document masking
+attn_mask_type = "causal"  # Use "block_causal" for document-aware masking
+
+# Attention Gating (Gated Attention for LLMs, NeurIPS 2025 Best Paper)
+attn_gate_type = "none"  # "none", "scalar", "elementwise_dense", "elementwise_lowrank"
+attn_gate_input = "x"  # Gate input: "x" (input to attention) or "xv" (value vector)
+attn_gate_activation = "sigmoid"  # Activation: "sigmoid" or "tanh_sq" (tanh squared)
+attn_gate_lowrank_dim = 64  # Low-rank dim for "elementwise_lowrank" type
+attn_gate_bias = true  # Whether to use bias in gate linear layers
+
+[metrics]
+log_freq = 500
+disable_color_printing = true
+enable_tensorboard = true
+save_tb_folder = "tb"
+
+# Parameter Logging Configuration
+[parameter_logging]
+enabled = true
+log_interval = 1000
+log_parameters = true
+log_gradients = true
+log_optimizer_states = true
+include_patterns = []
+exclude_patterns = []
+
+[training]
+dataset = "oellm_dataset"
+local_batch_size = 8
+seq_len = 2048
+steps = 10000
+mixed_precision_param = "bfloat16"
+
+[optimizer]
+name = "AdamW"
+lr = 1e-3
+weight_decay = 0.1
+beta1 = 0.9
+beta2 = 0.95
+
+[lr_scheduler]
+# Scheduler type selection
+scheduler_type = "universal"  # Universal scheduler that can emulate all others
+
+# Phase 1 - Warm phase (warmup or warmdown)
+warm_steps = 0
+warm_ratio = 0.1
+warm_direction = "up"
+warm_type = "linear"
+warm_start_ratio = 2.0
+
+# Phase 2 - Main phase
+main_decay_type = "cosine"
+main_decay_ratio = 0.0
+
+# Phase 3 - Cooldown phase
+cooldown_steps = 0
+cooldown_ratio = 0.0
+cooldown_type = "cosine"
+
+# Global parameters
+lr_min_absolute = 1e-5
+
+[parallelism]
+data_parallel_replicate_degree = 1
+data_parallel_shard_degree = -1
+tensor_parallel_degree = 1
+pipeline_parallel_degree = 1
+context_parallel_degree = 1
+
+[compile]
+enable = true
+backend = "inductor"
+components = ["model", "loss"]
+
+[activation_checkpoint]
+mode = "none"
+selective_ac_option = "op"
+early_stop = false
+memory_budget = 0.5
+visualize_memory_budget_pareto = false
+
+[quantize.linear.float8]
+enable_fsdp_float8_all_gather = false
+precompute_float8_dynamic_scale_for_fsdp = false
+filter_fqns = ["output"]
+
+[checkpoint]
+enable = false
+folder = "checkpoint"
+interval = 2000
+last_save_model_only = false
+export_dtype = "float16"
+async_mode = "disabled"
+
+# oellmData configuration - paths are injected by cluster_config
+[data]
+# min_doc_len, data_prefix, chunks_dir, dataloader are injected by cluster_config
+
+[validation]
+enable = true
+freq = 1000
+steps = -1
+local_batch_size = -1
+max_eval_samples = 50000
+
+# Standard benchmarks (WikiText, LAMBADA)
+[benchmarks]
+enable = false
+wikitext2_path = ""
+wikitext103_path = ""
+lambada_path = ""
+batch_size = 8
+
+# oellmTokenizer configuration
+[sci_tokenizer]
+default_add_bos = true
+default_add_eos = false
+
+[experimental]
+custom_import = "titan_oellm.models"

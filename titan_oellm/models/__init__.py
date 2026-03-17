@@ -13,7 +13,9 @@ and available for training, regardless of which specific model is being used.
 
 # Import all custom models to register their train specs
 from . import qwen3_custom
+from . import gpt_plus
 
 __all__ = [
     "qwen3_custom",
+    "gpt_plus",
 ]

@@ -344,9 +344,17 @@ class Model(BaseModel):
     attn_mask_type: str = "causal"
     """Attention mask type: 'causal' (standard) or 'block_causal' (document-aware)"""
 
-    # Flash Attention parameters
-    use_flash_attn: bool = False
-    """Enable direct Flash Attention 2/3 (auto-selects FA3 on Hopper, FA2 otherwise)"""
+    # Attention Gating parameters (gpt_plus)
+    attn_gate_type: str = "none"
+    """Attention gate type: 'none', 'scalar', 'elementwise_dense', 'elementwise_lowrank'"""
+    attn_gate_input: str = "x"
+    """Gate input: 'x' (input to attention) or 'xv' (value vector)"""
+    attn_gate_activation: str = "sigmoid"
+    """Activation: 'sigmoid' or 'tanh_sq'"""
+    attn_gate_lowrank_dim: int = 64
+    """Low-rank dimension for elementwise_lowrank gate type"""
+    attn_gate_bias: bool = True
+    """Whether to use bias in gate linear layers"""
 
     # Qwen3-specific parameters
     qk_norm: bool = True

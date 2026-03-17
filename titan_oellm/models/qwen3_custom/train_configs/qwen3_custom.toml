@@ -12,18 +12,8 @@ name = "qwen3_custom"
 flavor = "0.6B"
 vocab_size = 50432  # Qwen3 vocabulary size (must match tokenizer)
 # tokenizer_path is injected by cluster_config
-
-# Qwen3-specific parameters (head_dim, hidden_dim come from the flavor)
-qk_norm = true  # Enable QK normalization in attention
-rope_theta = 1000000  # RoPE theta value for rotary embeddings
-norm_eps = 1e-6  # Layer normalization epsilon
-depth_init = true  # Use depth-dependent initialization
-enable_weight_tying = false  # Tie embedding and output head weights (reduces params)
-use_complex_rope = false  # Complex-mul RoPE (interleaved pairing, fewer intermediates); incompatible with HF checkpoints
-
-# MoE parameters (for MoE variants)
-moe_enabled = false
-moe_inter_dim = 768
+# All architecture parameters (head_dim, hidden_dim, rope_theta, qk_norm, etc.)
+# come from the flavor definition. Override here only when explicitly needed.
 
 [metrics]
 log_freq = 500
