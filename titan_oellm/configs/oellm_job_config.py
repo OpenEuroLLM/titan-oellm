@@ -374,6 +374,8 @@ class Model(BaseModel):
     """Use depth-dependent initialization (Qwen3)"""
     enable_weight_tying: bool = False
     """Tie embedding and output head weights (Qwen3)"""
+    use_complex_rope: bool = False
+    """Complex-mul RoPE (interleaved pairing, fewer intermediates); incompatible with HF checkpoints"""
     moe_enabled: bool = False
     """Enable Mixture of Experts (Qwen3 MoE variants)"""
     moe_inter_dim: int = 768

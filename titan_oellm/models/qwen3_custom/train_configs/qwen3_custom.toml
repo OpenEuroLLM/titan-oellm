@@ -1,23 +1,25 @@
 # Base Configuration for qwen3_custom model
 # This is a unified config for all clusters - paths are injected via cluster_config.py
+# Use with: python train.py --job.config_file=configs/qwen3_custom.toml <cluster-specific-args>
 
 [job]
-custom_config_module = "titan_oellm.configs.sci_job_config"
+dump_folder = "./outputs/torchtitan"
+description = "TorchTitan training for qwen3_custom model"
+custom_config_module = "titan_oellm.configs.oellm_job_config"
 
 [model]
 name = "qwen3_custom"
 flavor = "0.6B"
-vocab_size = 151936  # Qwen3 vocabulary size (must match tokenizer)
+vocab_size = 50432  # Qwen3 vocabulary size (must match tokenizer)
 # tokenizer_path is injected by cluster_config
 
-# Qwen3-specific parameters
+# Qwen3-specific parameters (head_dim, hidden_dim come from the flavor)
 qk_norm = true  # Enable QK normalization in attention
 rope_theta = 1000000  # RoPE theta value for rotary embeddings
-head_dim = 128  # Dimension per attention head
-hidden_dim = 3072  # FFN hidden dimension
 norm_eps = 1e-6  # Layer normalization epsilon
 depth_init = true  # Use depth-dependent initialization
 enable_weight_tying = false  # Tie embedding and output head weights (reduces params)
+use_complex_rope = false  # Complex-mul RoPE (interleaved pairing, fewer intermediates); incompatible with HF checkpoints
 
 # MoE parameters (for MoE variants)
 moe_enabled = false
@@ -36,12 +38,11 @@ log_interval = 1000  # Log parameter stats every 1000 steps
 log_parameters = true  # Log parameter statistics (max, min, norm, std)
 log_gradients = true  # Log gradient statistics
 log_optimizer_states = true  # Log AdamW optimizer statistics
-log_gates = false  # Not applicable for Qwen3
 include_patterns = []  # Include all parameters (empty = include all)
 exclude_patterns = []  # Log all parameters including bias
 
 [training]
-dataset = "sci_dataset"
+dataset = "oellm_dataset"
 local_batch_size = 8
 seq_len = 2048
 steps = 10000
@@ -55,20 +56,27 @@ beta1 = 0.9
 beta2 = 0.95
 
 [lr_scheduler]
-scheduler_type = "universal"
+# Scheduler type selection
+scheduler_type = "universal"  # Universal scheduler that can emulate all others
+
+# Phase 1 - Warm phase (warmup or warmdown)
+warm_steps = 0  # Absolute warm steps (mutually exclusive with warm_ratio, both can be 0)
+warm_ratio = 0.0  # Warm steps as ratio of total (mutually exclusive with warm_steps, both can be 0)
+warm_direction = "up"  # Direction: "up" (warmup) or "down" (warmdown)
+warm_type = "linear"  # Decay curve: "linear", "cosine", "exp", "sqrt"
+warm_start_ratio = 2.0  # Starting LR multiplier for warmdown (only used when warm_direction="down")
+
+# Phase 2 - Main phase
+main_decay_type = "cosine"  # Base schedule decay: "const", "linear", "cosine", "exp", "sqrt"
+main_decay_ratio = 0.1  # Target LR ratio at end of main phase (e.g., 0.1 = 10% of base_lr)
+
+# Phase 3 - Cooldown phase
+cooldown_steps = 0  # Absolute cooldown steps (mutually exclusive with cooldown_ratio, both can be 0)
+cooldown_ratio = 0.0  # Cooldown steps as ratio of total (mutually exclusive with cooldown_steps, both can be 0)
+cooldown_type = "cosine"  # Decay curve: "linear", "cosine", "exp", "sqrt"
+
+# Global parameters
 lr_min_absolute = 1e-5  # Absolute minimum learning rate
-# Phase 1: Warm (warmup or warmdown)
-warm_steps = 0
-warm_ratio = 0.0  # Or use ratio: warm_steps as % of total
-warm_direction = "up"  # "up" (warmup) or "down" (warmdown)
-warm_type = "linear"
-# Phase 2: Main phase
-main_decay_type = "cosine"
-main_decay_ratio = 0.1
-# Phase 3: Cooldown
-cooldown_steps = 0
-cooldown_ratio = 0.0  # Or use ratio: cooldown_steps as % of total
-cooldown_type = "cosine"
 
 [parallelism]
 data_parallel_replicate_degree = 1
@@ -76,7 +84,6 @@ data_parallel_shard_degree = -1
 tensor_parallel_degree = 1
 pipeline_parallel_degree = 1
 context_parallel_degree = 1
-enable_compiled_autograd = false
 
 [compile]
 enable = true
@@ -100,7 +107,7 @@ early_stop = false
 # Memory budget for mode="memory_budget": 0.0 = max memory savings, 1.0 = max speed
 memory_budget = 0.5
 
-# Visualize memory/speed tradeoff pareto curve (generates SVG in $OUTPUT_DIR/<dump_folder>/memory_budget_pareto/)
+# Visualize memory/speed tradeoff pareto curve (generates SVG in dump_folder/memory_budget_pareto/)
 visualize_memory_budget_pareto = false
 
 [quantize.linear.float8]
@@ -122,7 +129,7 @@ async_mode = "disabled"  # ["disabled", "async", "async_with_pinned_mem"]
 # initial_load_model_only = true  # Only load model weights, not optimizer state
 # initial_load_path = "./assets/hf/Qwen3-0.6B"  # Path to HF checkpoint
 
-# SciData configuration - paths are injected by cluster_config
+# oellmData configuration - paths are injected by cluster_config
 [data]
 # min_doc_len, data_prefix, chunks_dir, dataloader are injected by cluster_config
 # These defaults are overridden at runtime
@@ -133,7 +140,7 @@ freq = 1000  # Frequency of validation evaluation (aligned with torchtitan v0.2.
 steps = -1  # Number of validation steps (-1 = full validation set, >0 = limit steps)
 # data_prefix is injected by cluster_config
 local_batch_size = -1  # Use training batch size
-max_eval_samples = 50000  # Total samples across all workers (-1 = full validation set)
+max_eval_samples = 500000  # Total samples across all workers (-1 = full validation set)
 # dataloader is inherited from [data] section via cluster_config
 
 # Standard benchmarks (WikiText, LAMBADA)
@@ -145,7 +152,7 @@ wikitext103_path = ""  # Path prefix for WikiText-103 (set via CLI from cluster_
 lambada_path = ""  # Path prefix for LAMBADA (set via CLI from cluster_paths.toml)
 batch_size = 8
 
-# SciTokenizer configuration
+# oellmTokenizer configuration
 [sci_tokenizer]
 default_add_bos = true
 default_add_eos = false

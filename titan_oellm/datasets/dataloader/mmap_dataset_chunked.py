@@ -139,10 +139,9 @@ class ChunkedMMapDataset(torch.utils.data.IterableDataset):
         return all_chunks
 
     def assign_chunks_to_worker(self, all_chunks: List) -> None:
-        """Randomly assign chunks to this worker"""
+        """Assign chunks to this worker via round-robin, then shuffle with seed (epoch 0)."""
         total_chunks = len(all_chunks)
 
-        # Create a shuffled list of chunk indices
         chunk_indices = list(range(total_chunks))
 
         if self.dp_world_size > 1:
@@ -150,7 +149,12 @@ class ChunkedMMapDataset(torch.utils.data.IterableDataset):
         else:
             worker_chunk_indices = chunk_indices
 
-        self.worker_chunks = [all_chunks[i] for i in worker_chunk_indices]
+        worker_chunks = [all_chunks[i] for i in worker_chunk_indices]
+
+        # Shuffle with seed for epoch 0 so different seeds see different data.
+        # Subsequent epochs use seed + epoch_counter (same formula, see load_current_chunk).
+        rng = np.random.RandomState(self.seed + 0)
+        self.worker_chunks = rng.permutation(worker_chunks).tolist()
 
         # Load chunk metadata to calculate total samples
         self.chunk_lengths = []

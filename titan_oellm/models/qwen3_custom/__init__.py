@@ -250,7 +250,7 @@ qwen3_moe_configs = {
 
 
 # Merge baseline and MoE configs
-qwen3_custom_configs = {**qwen3_baseline_configs, **qwen3_moe_configs}
+qwen3_custom_configs = {**qwen3_custom_configs, **qwen3_moe_configs}
 
 
 def get_train_spec() -> TrainSpec:

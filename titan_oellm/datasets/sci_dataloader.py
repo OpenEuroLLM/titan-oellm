@@ -10,7 +10,6 @@ from torchtitan.config import JobConfig
 from titan_oellm.constants import IGNORE_INDEX
 from titan_oellm.datasets.dataloader.mmap_dataset import MMapDataset
 from titan_oellm.datasets.dataloader.deterministic_packed_dataset import DeterministicPackedDataset
-# from titan_oellm.datasets.dataloader.parallel_mmap_dataset_chunked import ChunkedMMapDataset
 from titan_oellm.datasets.dataloader.mmap_dataset_chunked import ChunkedMMapDataset
 from titan_oellm.datasets.sequencer.simple_concat import StreamingSequencer
 from titan_oellm.datasets.utils.collator import collate_function, collate_function_document_eval
@@ -47,7 +46,9 @@ def _compute_docs_per_chunk(job_config: JobConfig) -> int:
     docs_per_chunk = math.ceil(split_samples / num_chunks)
     actual_samples = docs_per_chunk * num_chunks
 
-    logger.info(f"Split config: {split_samples} requested → {docs_per_chunk} docs/chunk × {num_chunks} chunks = {actual_samples} actual")
+    logger.info(
+        f"Split config: {split_samples} requested → {docs_per_chunk} docs/chunk × {num_chunks} chunks = {actual_samples} actual"
+    )
     return docs_per_chunk
 
 
