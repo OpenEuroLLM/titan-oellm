@@ -69,7 +69,7 @@ class DeterministicPackedDataset(torch.utils.data.IterableDataset):
 
     def __init__(
         self,
-        chunks_dir: str,
+        chunks_dir: str | list[str],
         dp_world_size: int,
         dp_rank: int,
         global_batch_size: int,
@@ -83,7 +83,11 @@ class DeterministicPackedDataset(torch.utils.data.IterableDataset):
     ) -> None:
         super().__init__()
 
-        self.chunks_dir = Path(chunks_dir)
+        if isinstance(chunks_dir, list):
+            self.chunks_dirs = [Path(d) for d in chunks_dir]
+        else:
+            self.chunks_dirs = [Path(chunks_dir)]
+        self.chunks_dir = self.chunks_dirs[0]  # kept for logging / back-compat
         self.dp_world_size = dp_world_size
         self.dp_rank = dp_rank
         self.global_batch_size = global_batch_size
@@ -108,7 +112,8 @@ class DeterministicPackedDataset(torch.utils.data.IterableDataset):
         # Discover all chunks
         self.all_chunks = self._get_chunk_prefixes()
         num_chunks = len(self.all_chunks)
-        logger.info(f"Found {num_chunks} total chunks in {self.chunks_dir}")
+        dirs_str = self.chunks_dirs[0] if len(self.chunks_dirs) == 1 else self.chunks_dirs
+        logger.info(f"Found {num_chunks} total chunks in {dirs_str}")
 
         # Read per-chunk document lengths and compute effective token counts
         self._all_chunk_doc_lengths = self._read_all_chunk_doc_lengths()
@@ -149,25 +154,25 @@ class DeterministicPackedDataset(torch.utils.data.IterableDataset):
     # ── Chunk discovery ──────────────────────────────────────────────────
 
     def _get_chunk_prefixes(self) -> List[str]:
-        """Discover all available chunk files, sorted for deterministic ordering."""
-        if not self.chunks_dir.exists():
-            raise FileNotFoundError(f"Chunks directory not found: {self.chunks_dir}")
-
-        idx_files = list(self.chunks_dir.glob("chunk_*.idx"))
+        """Discover all available chunk files across all chunks_dirs, sorted for deterministic ordering."""
         all_chunks = []
 
-        for idx_file in idx_files:
-            chunk_prefix = str(idx_file).replace('.idx', '')
-            bin_file = Path(f"{chunk_prefix}.bin")
-            if bin_file.exists():
-                all_chunks.append(chunk_prefix)
-            else:
-                logger.warning(f"Missing .bin file for {idx_file}")
+        for chunks_dir in self.chunks_dirs:
+            if not chunks_dir.exists():
+                raise FileNotFoundError(f"Chunks directory not found: {chunks_dir}")
+
+            for idx_file in chunks_dir.glob("chunk_*.idx"):
+                chunk_prefix = str(idx_file).replace('.idx', '')
+                bin_file = Path(f"{chunk_prefix}.bin")
+                if bin_file.exists():
+                    all_chunks.append(chunk_prefix)
+                else:
+                    logger.warning(f"Missing .bin file for {idx_file}")
 
         all_chunks.sort()
 
         if not all_chunks:
-            raise RuntimeError(f"No valid chunk pairs found in {self.chunks_dir}")
+            raise RuntimeError(f"No valid chunk pairs found in {self.chunks_dirs}")
         return all_chunks
 
     # ── Per-chunk metadata ───────────────────────────────────────────────
