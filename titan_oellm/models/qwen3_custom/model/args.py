@@ -48,6 +48,9 @@ class Qwen3CustomModelArgs(BaseModelArgs):
     attn_mask_type: str = "causal"
     eos_id: int = 151645
 
+    qkv_bias: bool = False
+    mlp_bias: bool = False
+
     enable_weight_tying: bool = False
 
     # MoE params
@@ -56,12 +59,35 @@ class Qwen3CustomModelArgs(BaseModelArgs):
     moe_args: MoEArgs = field(default_factory=MoEArgs)
 
     def update_from_config(self, job_config: JobConfig, **kwargs) -> None:
+        if hasattr(job_config.model, "max_seq_len") and job_config.model.max_seq_len:
+            self.max_seq_len = job_config.model.max_seq_len
+        elif hasattr(job_config, "max_seq_len"):
+            self.max_seq_len = job_config.max_seq_len
+
+        if hasattr(job_config.model, 'dim'):
+            self.dim = job_config.model.dim
+        if hasattr(job_config.model, 'n_layers'):
+            self.n_layers = job_config.model.n_layers
+        if hasattr(job_config.model, "n_heads"):
+            self.n_heads = job_config.model.n_heads
+        if hasattr(job_config.model, "qkv_bias"):
+            self.qkv_bias = job_config.model.qkv_bias
+        if hasattr(job_config.model, "mlp_bias"):
+            self.mlp_bias = job_config.model.mlp_bias
+        if hasattr(job_config.model, "n_kv_heads"):
+            self.n_kv_heads = job_config.model.n_kv_heads
+        if hasattr(job_config.model, "vocab_size"):
+            self.vocab_size = job_config.model.vocab_size
+        if hasattr(job_config.model, "head_dim"):
+            self.head_dim = job_config.model.head_dim
+        if hasattr(job_config.model, "hidden_dim"):
+            self.hidden_dim = job_config.model.hidden_dim
+        
         seq_len = job_config.training.seq_len
         if seq_len > self.max_seq_len:
             logger.warning(
                 f"Sequence length {seq_len} exceeds original maximum {self.max_seq_len}."
             )
-        self.max_seq_len = seq_len
 
         # Update vocab_size if specified in config
         if hasattr(job_config.model, 'vocab_size'):

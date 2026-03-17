@@ -202,6 +202,7 @@ def collate_function(
     eos_id=None,
     seq_len=None,
     max_cu_seqlens_size=None,
+    mask_eot_loss=False,
 ):
     """Collate function for batching samples.
 
@@ -261,6 +262,9 @@ def collate_function(
             mask = torch.from_numpy(np.concatenate([s[1:] for s in mask_source])).long()
             trg_sample = trg_sample.masked_fill(mask == 0, ignore_index)
             sample_mask.append(mask)
+
+        if mask_eot_loss and eos_id is not None:
+            trg_sample = trg_sample.masked_fill(trg_sample == eos_id, ignore_index)
 
         trg_seq.append(trg_sample)
 

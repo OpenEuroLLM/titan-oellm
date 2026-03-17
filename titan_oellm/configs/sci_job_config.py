@@ -17,6 +17,7 @@ from torchtitan.config.job_config import (
     Training as BaseTraining,
 )
 from torchtitan.tools.logging import logger
+from torchtitan.config.job_config import Checkpoint as BaseCheckpoint
 
 
 @dataclass
@@ -51,6 +52,9 @@ class SciData:
 
     seed: int = 42
     """Random seed for data loading"""
+
+    mask_eot_loss: bool = False
+    """If True, mask EOS/EOT tokens from the loss (like Megatron's eod_mask_loss)."""
 
 
 @dataclass
@@ -209,6 +213,9 @@ class LRScheduler(BaseLRScheduler):
     # NOTE: decay_type is inherited from BaseLRScheduler (default="linear")
     # NOTE: lr_min is inherited from BaseLRScheduler (default=0.0)
 
+    # fix to none as always warm_steps / warm_ratio should be used
+    warmup_steps: int | None = None
+
     decay_ratio: float | None = None
     """
     Controls the proportion of remaining training steps (after warmup) allocated to decay/annealing.
@@ -298,6 +305,22 @@ class LRScheduler(BaseLRScheduler):
 
     cooldown_type: str = "cosine"
 
+    lr_steps: int | None = None
+    """
+    Number of steps to use as the LR scheduler's total training duration.
+    If set, overrides ``training.steps`` for the scheduler only, so the training
+    loop runs for ``training.steps`` while the LR is planned over ``lr_steps``.
+    Useful for cooldown stages that resume from a checkpoint (self.step = start_step)
+    and run total_steps - start_step iterations, but need the LR to decay fully
+    over exactly decay_steps = total_steps - start_step.
+    """
+
+
+@dataclass
+class Checkpoint(BaseCheckpoint):
+
+    extra_steps: list[int] = field(default_factory=list)
+    """Additional specific steps at which to save a checkpoint, regardless of interval."""
 
 
 @dataclass
@@ -378,6 +401,21 @@ class Model(BaseModel):
     """Enable Mixture of Experts (Qwen3 MoE variants)"""
     moe_inter_dim: int = 768
     """MoE intermediate dimension (Qwen3 MoE variants)"""
+
+    dim: int = 768
+    n_layers: int = 12
+    n_heads: int = 6
+    n_kv_heads: int = 6
+    vocab_size: int = 50432
+    head_dim: int = 128
+    hidden_dim: int = 3072 
+    max_seq_len: int = 100000
+
+    qkv_bias: bool = False
+    mlp_bias: bool = False
+
+    def __post_init__(self):
+        assert self.warmup_steps is None, "Use warm_steps / warm_ratio!!!"
 
 
 @dataclass

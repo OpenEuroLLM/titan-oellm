@@ -190,12 +190,12 @@ class Attention(nn.Module):
             self.k_norm = None
 
         self.wq = nn.Linear(
-            model_args.dim, model_args.n_heads * self.head_dim, bias=False
+            model_args.dim, model_args.n_heads * self.head_dim, bias=model_args.qkv_bias
         )
-        self.wk = nn.Linear(model_args.dim, self.n_kv_heads * self.head_dim, bias=False)
-        self.wv = nn.Linear(model_args.dim, self.n_kv_heads * self.head_dim, bias=False)
+        self.wk = nn.Linear(model_args.dim, self.n_kv_heads * self.head_dim, bias=model_args.qkv_bias)
+        self.wv = nn.Linear(model_args.dim, self.n_kv_heads * self.head_dim, bias=model_args.qkv_bias)
         self.wo = nn.Linear(
-            model_args.n_heads * self.head_dim, model_args.dim, bias=False
+            model_args.n_heads * self.head_dim, model_args.dim, bias=model_args.qkv_bias
         )
 
         match self.attn_type:
@@ -319,13 +319,14 @@ class FeedForward(nn.Module):
         self,
         dim: int,
         hidden_dim: int,
+        bias: bool = False,
     ):
         super().__init__()
 
         # Hidden dimension is directly added from the model argsS
-        self.w1 = nn.Linear(dim, hidden_dim, bias=False)
-        self.w2 = nn.Linear(hidden_dim, dim, bias=False)
-        self.w3 = nn.Linear(dim, hidden_dim, bias=False)
+        self.w1 = nn.Linear(dim, hidden_dim, bias=bias)
+        self.w2 = nn.Linear(hidden_dim, dim, bias=bias)
+        self.w3 = nn.Linear(dim, hidden_dim, bias=bias)
 
     def forward(self, x):
         return self.w2(F.silu(self.w1(x)) * self.w3(x))
@@ -372,7 +373,7 @@ class TransformerBlock(nn.Module):
             )
         else:
             self.feed_forward = FeedForward(
-                dim=model_args.dim, hidden_dim=model_args.hidden_dim
+                dim=model_args.dim, hidden_dim=model_args.hidden_dim, bias=model_args.mlp_bias
             )
         self.attention_norm = nn.RMSNorm(model_args.dim, eps=model_args.norm_eps)
         self.ffn_norm = nn.RMSNorm(model_args.dim, eps=model_args.norm_eps)

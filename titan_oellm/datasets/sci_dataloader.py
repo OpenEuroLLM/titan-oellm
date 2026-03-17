@@ -85,6 +85,7 @@ def _make_collate_fn(
     eos_id,
     seq_len: int,
     ignore_index: int,
+    mask_eot_loss: bool = False,
 ) -> partial:
     """Build the collate function for training/concatenated-validation pipelines."""
     return partial(
@@ -95,6 +96,7 @@ def _make_collate_fn(
         eos_id=eos_id,
         seq_len=seq_len,
         max_cu_seqlens_size=attn_config["max_cu_seqlens_size"],
+        mask_eot_loss=mask_eot_loss,
     )
 
 
@@ -215,7 +217,8 @@ def build_sci_dataloader(
     # ── 3. Collate and wrap ──────────────────────────────────────────────
 
     attn_config = _resolve_attention_config(job_config, batch_size, seq_len, min_doc_len)
-    collate_fn = _make_collate_fn(dataloader_type, attn_config, eos_id, seq_len, ignore_index)
+    mask_eot_loss = getattr(job_config.data, "mask_eot_loss", False)
+    collate_fn = _make_collate_fn(dataloader_type, attn_config, eos_id, seq_len, ignore_index, mask_eot_loss)
 
     dl = ParallelAwareDataloader(
         dataset=wrapped_dataset,
@@ -345,7 +348,8 @@ def build_sci_validation_dataloader(
         # Validation disables flash attention for simplicity
         attn_config["use_flash_attention"] = False
 
-        collate_fn = _make_collate_fn(dataloader_type, attn_config, eos_id, seq_len, ignore_index)
+        mask_eot_loss = getattr(job_config.data, "mask_eot_loss", False)
+        collate_fn = _make_collate_fn(dataloader_type, attn_config, eos_id, seq_len, ignore_index, mask_eot_loss)
         wrapped_dataset = sequencer
 
     # ── 3. Wrap and return ───────────────────────────────────────────────
