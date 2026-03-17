@@ -813,9 +813,14 @@ class SciValidator(BaseValidator):
 
         # Determine max validation steps
         max_eval_samples = self.job_config.validation.max_eval_samples
+        val_steps = getattr(self.job_config.validation, "steps", -1)
         if max_eval_samples == -1:
-            # Process entire validation set
-            max_steps = float('inf')
+            if val_steps > 0:
+                # Use validation.steps as the hard batch limit
+                max_steps = val_steps
+            else:
+                # Process entire validation set (steps=-1 and max_eval_samples=-1)
+                max_steps = float('inf')
         else:
             # Estimate max steps based on max_eval_samples
             # This is approximate since actual samples per batch may vary
