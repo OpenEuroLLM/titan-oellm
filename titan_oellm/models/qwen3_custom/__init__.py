@@ -9,8 +9,10 @@
 # Qwen3 Custom Model for Titan-OELLM
 # Adapted from torchtitan Qwen3 implementation with titan-sci integration
 
+import torch
+
 from torchtitan.components.loss import build_cross_entropy_loss
-from torchtitan.components.optimizer import build_optimizers
+from torchtitan.components.optimizer import build_optimizers, OptimizersContainer
 from titan_oellm.components.lr_scheduler_universal import build_lr_schedulers_auto
 from titan_oellm.components.metrics_with_parameter_logging import build_metrics_processor_with_parameter_logging
 from titan_oellm.components.validator import build_sci_validator
@@ -168,6 +170,66 @@ qwen3_custom_configs = {
 }
 
 
+class _OptimizersContainerNoWdBiases(OptimizersContainer):
+    """OptimizersContainer that excludes 1-D params (biases, norm scales) from weight decay.
+
+    Matches Megatron-LM behavior: params with ndim < 2 (biases and norm scales)
+    are placed in a separate param group with weight_decay=0.
+    """
+
+    def __init__(self, model_parts, optimizer_cls, optimizer_kwargs):
+        wd = optimizer_kwargs.get("weight_decay", 0.0)
+        # base_kwargs go to optimizer as defaults (no weight_decay — set per group)
+        base_kwargs = {k: v for k, v in optimizer_kwargs.items() if k != "weight_decay"}
+
+        all_params = []
+        self.optimizers = []
+        self.model_parts = model_parts
+        for model in self.model_parts:
+            params = [p for p in model.parameters() if p.requires_grad]
+            decay_params = [p for p in params if p.dim() >= 2]
+            nodecay_params = [p for p in params if p.dim() < 2]
+            param_groups = [
+                {"params": decay_params, "weight_decay": wd},
+                {"params": nodecay_params, "weight_decay": 0.0},
+            ]
+            self.optimizers.append(optimizer_cls(param_groups, **base_kwargs))
+            all_params.extend(params)
+        self._validate_length(len(self.model_parts))
+        self._post_init(all_params, optimizer_kwargs)
+
+
+def build_optimizers_no_wd_biases(model_parts, optimizer_config, parallel_dims, ft_manager=None):
+    """Build optimizers with weight decay=0 for 1-D params (biases, norm scales).
+
+    Falls back to the standard build_optimizers for special cases (early_step_in_backward,
+    FaultTolerance). Matches Megatron-LM's no_wd parameter grouping.
+    """
+    if optimizer_config.early_step_in_backward or (
+        ft_manager is not None and ft_manager.enabled
+    ):
+        return build_optimizers(model_parts, optimizer_config, parallel_dims, ft_manager)
+
+    optimizer_classes = {
+        "Adam": torch.optim.Adam,
+        "AdamW": torch.optim.AdamW,
+    }
+    if optimizer_config.name not in optimizer_classes:
+        return build_optimizers(model_parts, optimizer_config, parallel_dims, ft_manager)
+
+    optimizer_cls = optimizer_classes[optimizer_config.name]
+    impl = optimizer_config.implementation
+    optimizer_kwargs = {
+        "lr": optimizer_config.lr,
+        "betas": (optimizer_config.beta1, optimizer_config.beta2),
+        "eps": optimizer_config.eps,
+        "weight_decay": optimizer_config.weight_decay,
+        "fused": impl == "fused",
+        "foreach": impl == "foreach",
+    }
+    return _OptimizersContainerNoWdBiases(model_parts, optimizer_cls, optimizer_kwargs)
+
+
 def get_train_spec() -> TrainSpec:
     """
     Create and return the training specification for qwen3_custom model.
@@ -184,7 +246,7 @@ def get_train_spec() -> TrainSpec:
         model_args=qwen3_custom_configs,
         parallelize_fn=parallelize_qwen3_custom,
         pipelining_fn=pipeline_llm,  # Standard torchtitan v0.2.0 pipeline
-        build_optimizers_fn=build_optimizers,  # Standard optimizer (AdamW)
+        build_optimizers_fn=build_optimizers_no_wd_biases,  # Exclude biases/norms from WD
         build_lr_schedulers_fn=build_lr_schedulers_auto,  # Universal LR scheduler
         build_dataloader_fn=build_sci_dataloader,  # Sci dataloader with MMap support
         build_tokenizer_fn=build_sci_hf_tokenizer,  # HF tokenizer with BOS/EOS control
