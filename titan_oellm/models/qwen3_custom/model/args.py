@@ -66,23 +66,23 @@ class Qwen3CustomModelArgs(BaseModelArgs):
         elif hasattr(job_config, "max_seq_len"):
             self.max_seq_len = job_config.max_seq_len
 
-        if hasattr(job_config.model, 'dim'):
+        if hasattr(job_config.model, 'dim') and job_config.model.dim is not None:
             self.dim = job_config.model.dim
-        if hasattr(job_config.model, 'n_layers'):
+        if hasattr(job_config.model, 'n_layers')  and job_config.model.n_layers is not None:
             self.n_layers = job_config.model.n_layers
-        if hasattr(job_config.model, "n_heads"):
+        if hasattr(job_config.model, "n_heads")  and job_config.model.n_heads is not None:
             self.n_heads = job_config.model.n_heads
-        if hasattr(job_config.model, "qkv_bias"):
+        if hasattr(job_config.model, "qkv_bias") and job_config.model.qkv_bias is not None:
             self.qkv_bias = job_config.model.qkv_bias
-        if hasattr(job_config.model, "mlp_bias"):
+        if hasattr(job_config.model, "mlp_bias")  and job_config.model.mlp_bias is not None:
             self.mlp_bias = job_config.model.mlp_bias
-        if hasattr(job_config.model, "n_kv_heads"):
+        if hasattr(job_config.model, "n_kv_heads")  and job_config.model.n_kv_heads is not None:
             self.n_kv_heads = job_config.model.n_kv_heads
-        if hasattr(job_config.model, "vocab_size"):
+        if hasattr(job_config.model, "vocab_size")  and job_config.model.vocab_size is not None:
             self.vocab_size = job_config.model.vocab_size
-        if hasattr(job_config.model, "head_dim"):
+        if hasattr(job_config.model, "head_dim")  and job_config.model.head_dim is not None:
             self.head_dim = job_config.model.head_dim
-        if hasattr(job_config.model, "hidden_dim"):
+        if hasattr(job_config.model, "hidden_dim")  and job_config.model.hidden_dim is not None:
             self.hidden_dim = job_config.model.hidden_dim
         
         seq_len = job_config.training.seq_len
@@ -90,10 +90,6 @@ class Qwen3CustomModelArgs(BaseModelArgs):
             logger.warning(
                 f"Sequence length {seq_len} exceeds original maximum {self.max_seq_len}."
             )
-
-        # Update vocab_size if specified in config
-        if hasattr(job_config.model, 'vocab_size'):
-            self.vocab_size = job_config.model.vocab_size
 
         # Override flavor values only for fields explicitly set in config
         # (typed as X | None = None in oellm_job_config; None means "use flavor").

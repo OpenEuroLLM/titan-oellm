@@ -83,49 +83,6 @@ class ValidationDataset:
     """Tree size for BestFitPackedDataset packing (default: 500)"""
 
 
-
-@dataclass
-class ValidationDataset:
-    """Validation dataset override configuration (optional fields override Validation defaults)."""
-
-    name: str = ""
-    """Name for metrics/logging (if empty, auto-assigned)."""
-
-    data_prefix: str | None = None
-    local_batch_size: int | None = None
-    max_eval_samples: int | None = None
-    dataloader: str | None = None
-    data_source: str | None = None
-    split_samples: int | None = None
-    eval_mode: str | None = None
-    steps: int | None = None
-
-    best_fit_buffer_size: int = 500
-    """Tree size for BestFitPackedDataset packing (default: 500)"""
-
-
-
-@dataclass
-class ValidationDataset:
-    """Validation dataset override configuration (optional fields override Validation defaults)."""
-
-    name: str = ""
-    """Name for metrics/logging (if empty, auto-assigned)."""
-
-    data_prefix: str | None = None
-    local_batch_size: int | None = None
-    max_eval_samples: int | None = None
-    dataloader: str | None = None
-    data_source: str | None = None
-    split_samples: int | None = None
-    eval_mode: str | None = None
-    steps: int | None = None
-
-    best_fit_buffer_size: int = 500
-    """Tree size for BestFitPackedDataset packing (default: 500)"""
-
-
-
 @dataclass
 class Validation:
     """Validation configuration for evaluation during training."""
@@ -460,14 +417,15 @@ class Model(BaseModel):
     moe_inter_dim: int | None = None
     """MoE intermediate dimension. None = use flavor value."""
 
-    dim: int = 768
-    n_layers: int = 12
-    n_heads: int = 6
-    n_kv_heads: int = 6
-    vocab_size: int = 50432
-    head_dim: int = 128
-    hidden_dim: int = 3072 
-    max_seq_len: int = 100000
+    # can be used to override 
+    dim: int | None = None
+    n_layers: int | None = None
+    n_heads: int | None = None
+    n_kv_heads: int | None = None
+    vocab_size: int | None = None
+    head_dim: int | None = None
+    hidden_dim: int | None = None
+    max_seq_len: int | None = None
 
     qkv_bias: bool = False
     mlp_bias: bool = False
