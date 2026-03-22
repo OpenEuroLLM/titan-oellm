@@ -12,8 +12,18 @@ name = "qwen3_custom"
 flavor = "0.6B"
 vocab_size = 50432  # Qwen3 vocabulary size (must match tokenizer)
 # tokenizer_path is injected by cluster_config
-# All architecture parameters (head_dim, hidden_dim, rope_theta, qk_norm, etc.)
-# come from the flavor definition. Override here only when explicitly needed.
+
+# Qwen3-specific parameters (head_dim, hidden_dim come from the flavor)
+qk_norm = true  # Enable QK normalization in attention
+rope_theta = 1000000  # RoPE theta value for rotary embeddings
+norm_eps = 1e-6  # Layer normalization epsilon
+depth_init = true  # Use depth-dependent initialization
+enable_weight_tying = false  # Tie embedding and output head weights (reduces params)
+use_complex_rope = false  # Complex-mul RoPE (interleaved pairing, fewer intermediates); incompatible with HF checkpoints
+
+# MoE parameters (for MoE variants)
+moe_enabled = false
+moe_inter_dim = 768
 
 [metrics]
 log_freq = 500
@@ -47,7 +57,7 @@ beta2 = 0.95
 
 [lr_scheduler]
 # Scheduler type selection
-scheduler_type = "universal"  # Universal scheduler that can emulate all others
+scheduler_type = "universal_ou"  # Universal scheduler that can emulate all others
 
 # Phase 1 - Warm phase (warmup or warmdown)
 warm_steps = 0  # Absolute warm steps (mutually exclusive with warm_ratio, both can be 0)
@@ -56,9 +66,17 @@ warm_direction = "up"  # Direction: "up" (warmup) or "down" (warmdown)
 warm_type = "linear"  # Decay curve: "linear", "cosine", "exp", "sqrt"
 warm_start_ratio = 2.0  # Starting LR multiplier for warmdown (only used when warm_direction="down")
 
-# Phase 2 - Main phase
+# Phase 2 - Main phase (with optional OU process)
+use_ou_process = false  # Enable OU stochastic process
 main_decay_type = "cosine"  # Base schedule decay: "const", "linear", "cosine", "exp", "sqrt"
 main_decay_ratio = 0.1  # Target LR ratio at end of main phase (e.g., 0.1 = 10% of base_lr)
+
+# OU stochastic parameters (only used when use_ou_process = true)
+ou_theta = 0.01  # Mean reversion rate (lower = smoother)
+ou_sigma = 0.1  # Noise amplitude for OU factor around 1.0 (0.1 = ±10% fluctuations)
+ou_max_change = 0.05  # Max change in OU factor per step (0.05 = ±5% max change)
+ema_alpha = 0.99  # EMA smoothing factor (0.99 = strong smoothing)
+ou_seed = 1  # Seed for OU stochastic process (1 = deterministic)
 
 # Phase 3 - Cooldown phase
 cooldown_steps = 0  # Absolute cooldown steps (mutually exclusive with cooldown_ratio, both can be 0)
@@ -143,7 +161,7 @@ lambada_path = ""  # Path prefix for LAMBADA (set via CLI from cluster_paths.tom
 batch_size = 8
 
 # oellmTokenizer configuration
-[sci_tokenizer]
+[oellm_tokenizer]
 default_add_bos = true
 default_add_eos = false
 

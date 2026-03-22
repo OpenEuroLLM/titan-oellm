@@ -507,6 +507,11 @@ class Qwen3Model(nn.Module, ModelProtocol):
 
         self.output = nn.Linear(model_args.dim, model_args.vocab_size, bias=False)
 
+        # Tie embedding and output weights if specified (must happen before FSDP
+        # so that FSDP sees a single shared parameter instead of two separate ones)
+        if model_args.enable_weight_tying:
+            self.output.weight = self.tok_embeddings.weight
+
     def init_weights(
         self,
         buffer_device: torch.device | None = None,
