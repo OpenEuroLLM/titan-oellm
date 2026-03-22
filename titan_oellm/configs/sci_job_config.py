@@ -56,6 +56,12 @@ class SciData:
     mask_eot_loss: bool = False
     """If True, mask EOS/EOT tokens from the loss (like Megatron's eod_mask_loss)."""
 
+    eos_id: int | None = -1
+    """EOS token ID inserted between documents during packing.
+       -1 (default): use tokenizer.eos_id (backward-compatible behaviour).
+       null / None: do NOT insert any EOS between documents (matches Megatron packing).
+       >= 0: use this specific token ID."""
+
 
 @dataclass
 class ValidationDataset:

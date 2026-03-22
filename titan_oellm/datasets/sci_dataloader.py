@@ -121,6 +121,10 @@ def build_sci_dataloader(
 
     ignore_index = IGNORE_INDEX
 
+    # Resolve effective eos_id: -1 → use tokenizer value; None → no EOS; >=0 → explicit
+    cfg_eos = getattr(job_config.data, "eos_id", -1)
+    eos_id: int | None = tokenizer.eos_id if cfg_eos == -1 else cfg_eos
+
     # Check for validation split mode — training excludes validation samples
     exclude_last_n = None  # For MMapDataset
     exclude_first_n_per_chunk = None  # For ChunkedMMapDataset
@@ -189,7 +193,7 @@ def build_sci_dataloader(
             global_batch_size=resolved_gbs,
             seq_len=seq_len,
             min_sequence_length=min_doc_len,
-            eos_id=tokenizer.eos_id,
+            eos_id=eos_id,
             infinite=True,
             seed=seed,
             exclude_first_n_per_chunk=exclude_first_n_per_chunk,
@@ -204,11 +208,8 @@ def build_sci_dataloader(
     # All other datasets yield documents that need StreamingSequencer.
 
     if dataloader_type in ("DeterministicPackedDataset", "BestFitPackedDataset"):
-        eos_id = tokenizer.eos_id
         wrapped_dataset = dataset
     else:
-        eos_id = tokenizer.eos_id
-
         sequencer = StreamingSequencer(
             dataset=dataset, sequence_length=seq_len, min_sequence_length=min_doc_len, drop_last=True, eos_id=eos_id
         )
@@ -310,7 +311,8 @@ def build_sci_validation_dataloader(
 
     # ── 2. Route to pipeline ─────────────────────────────────────────────
 
-    eos_id = tokenizer.eos_id
+    cfg_eos = getattr(job_config.data, "eos_id", -1)
+    eos_id: int | None = tokenizer.eos_id if cfg_eos == -1 else cfg_eos
     pad_id = getattr(tokenizer, "pad_id", 0)
     if pad_id is None or pad_id < 0:
         pad_id = eos_id
