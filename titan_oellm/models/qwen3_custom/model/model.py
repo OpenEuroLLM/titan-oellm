@@ -129,6 +129,43 @@ def apply_rotary_emb(
     return xq_out.type_as(xq), xk_out.type_as(xk)
 
 
+# ── Complex-mul RoPE (interleaved pairing) ────────
+# Uses fewer intermediate tensors than rotate_half, reducing peak memory.
+# Incompatible with HF Qwen3 checkpoints (different dimension pairing).
+
+
+def precompute_freqs_cis(
+    dim: int, max_seq_len: int, theta: float = 10000.0
+) -> torch.Tensor:
+    freqs = 1.0 / (theta ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim))
+    t = torch.arange(max_seq_len, device=freqs.device)
+    freqs = torch.outer(t, freqs).float()
+    return torch.polar(torch.ones_like(freqs), freqs)  # complex64
+
+
+def _reshape_freqs_cis(freqs_cis: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
+    ndim = x.ndim
+    assert ndim > 1
+    seqlen = x.shape[1]
+    freqs_cis = freqs_cis[0:seqlen]
+    assert freqs_cis.shape == (seqlen, x.shape[-1])
+    shape = [d if i == 1 or i == ndim - 1 else 1 for i, d in enumerate(x.shape)]
+    return freqs_cis.view(*shape)
+
+
+def apply_rotary_emb_complex(
+    xq: torch.Tensor,
+    xk: torch.Tensor,
+    freqs_cis: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    xq_ = torch.view_as_complex(xq.float().reshape(*xq.shape[:-1], -1, 2))
+    xk_ = torch.view_as_complex(xk.float().reshape(*xk.shape[:-1], -1, 2))
+    freqs_cis = _reshape_freqs_cis(freqs_cis, xq_)
+    xq_out = torch.view_as_real(xq_ * freqs_cis).flatten(3)
+    xk_out = torch.view_as_real(xk_ * freqs_cis).flatten(3)
+    return xq_out.type_as(xq), xk_out.type_as(xk)
+
+
 def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
     """torch.repeat_interleave(x, dim=2, repeats=n_rep)"""
     bs, slen, n_kv_heads, head_dim = x.shape
@@ -175,6 +212,7 @@ class Attention(nn.Module):
         self.head_dim = model_args.head_dim
         self.scaling = self.head_dim**-0.5
         self.attn_type = getattr(model_args, "attn_type", "sdpa")
+        self.use_complex_rope = model_args.use_complex_rope
 
         # RMSNorm added here to the here to include the q-k norm
         # This is one of the main differences between Llama3 and Qwen3
@@ -260,7 +298,10 @@ class Attention(nn.Module):
             xk = self.k_norm(xk)
 
         # Apply rotary embedding
-        xq, xk = apply_rotary_emb(xq, xk, rope_cache, positions)
+        if self.use_complex_rope:
+            xq, xk = apply_rotary_emb_complex(xq, xk, rope_cache)
+        else:
+            xq, xk = apply_rotary_emb(xq, xk, rope_cache, positions)
 
         # repeat k/v heads if n_kv_heads < n_heads
         keys = repeat_kv(xk, self.n_rep)  # (bs, seqlen, n_local_heads, head_dim)
@@ -470,6 +511,11 @@ class Qwen3Model(nn.Module, ModelProtocol):
 
         self.output = nn.Linear(model_args.dim, model_args.vocab_size, bias=False)
 
+        # Tie embedding and output weights if specified (must happen before FSDP
+        # so that FSDP sees a single shared parameter instead of two separate ones)
+        if model_args.enable_weight_tying:
+            self.output.weight = self.tok_embeddings.weight
+
     def init_weights(
         self,
         buffer_device: torch.device | None = None,
@@ -509,22 +555,26 @@ class Qwen3Model(nn.Module, ModelProtocol):
                 layer.init_weights(buffer_device)
         if self.norm is not None:
             self.norm.reset_parameters()
-        if self.output is not None:
-            if self.model_args.enable_weight_tying:
-                # parallelize_fn sets output.weight = tok_embeddings.weight, but
-                # to_empty() (called before init_weights) breaks tensor aliasing.
-                # Re-apply here so the tie is active during training.
-                self.output.weight = self.tok_embeddings.weight
-            else:
-                nn.init.trunc_normal_(
-                    self.output.weight,
-                    mean=0.0,
-                    std=final_out_std,
-                    a=-cutoff_factor * final_out_std,
-                    b=cutoff_factor * final_out_std,
-                )
+        final_out_std = self.model_args.dim**-0.5
+        cutoff_factor = 3
+
+        # Only initialize output weights if they're not tied to embeddings
+        if self.output is not None and not self.model_args.enable_weight_tying:
+            nn.init.trunc_normal_(
+                self.output.weight,
+                mean=0.0,
+                std=final_out_std,
+                a=-cutoff_factor * final_out_std,
+                b=cutoff_factor * final_out_std,
+            )
 
     def _precompute_rope_cache(self) -> torch.Tensor:
+        if self.model_args.use_complex_rope:
+            return precompute_freqs_cis(
+                self.model_args.head_dim,
+                self.model_args.max_seq_len,
+                self.model_args.rope_theta,
+            )
         return precompute_rope_cache(
             self.model_args.head_dim,
             self.model_args.max_seq_len,

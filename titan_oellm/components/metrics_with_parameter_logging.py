@@ -22,7 +22,7 @@ from torchtitan.config import JobConfig as BaseJobConfig
 from torchtitan.distributed import ParallelDims
 
 from titan_oellm.components.parameter_logger import ParameterStatsLogger
-from titan_oellm.configs.sci_job_config import JobConfig
+from titan_oellm.configs.oellm_job_config import JobConfig
 
 
 class EnhancedMetricsProcessor(MetricsProcessor):
