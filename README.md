@@ -1,11 +1,11 @@
 # Titan-OELLM
 
 A TorchTitan-based framework for training large language models on HPC systems.
-Focus on research and deveoplent of new architectures and optimization methods. 
+Focus on research and development of new architectures and optimization methods.
 
 ## Features
 
-- **Custom Model Architectures**: Easily modiufy architecturers based on default implementations such as Qwen3
+- **Custom Model Architectures**: Easily modify architectures based on default implementations such as Qwen3
 - **HPC Optimization**: SLURM scripts for different clusters
 - **Flexible Configuration**: TOML-based configs with cluster-specific path resolution
 - **Validation During Training**: Comprehensive validation with TensorBoard integration
@@ -102,7 +102,6 @@ bash submit_job.sh slurm/juwels.sh
 
 | Model | Description | Config |
 |-------|-------------|--------|
-| **gpt_plus** | GPT with QKNormPlus attention normalization and RoPE scaling | `base_plus.toml` |
 | **qwen3_custom** | Qwen3 custom implementation with MoE support | `qwen3_custom.toml` |
 
 ## Configuration
@@ -134,7 +133,7 @@ titan-oellm/
 │   ├── juwels.sh
 │   └── capella.sh
 ├── submit_job.sh          # Job submission wrapper
-└── torchtitan/            # TorchTitan submodule (v0.2.0)
+└── torchtitan/            # TorchTitan submodule (v0.2.1)
 ```
 
 ### User Configuration
@@ -186,20 +185,9 @@ apptainer exec --nv titan.sif \
     --output-dir /path/to/benchmarks
 ```
 
-## LR Schedulers
+## LR Scheduler
 
-The framework supports multiple learning rate schedulers:
-
-| Scheduler | Description |
-|-----------|-------------|
-| `wsd` | Warmup-Stable-Decay (TorchTitan default) |
-| `wdd` | Warmup with gradual decay during stable phase |
-| `cosine` | Cosine annealing with warmup |
-| `universal` | 3-phase scheduler (warm -> main -> cooldown) |
-
-### Universal Scheduler
-
-The universal scheduler provides flexible 3-phase control:
+The framework uses a unified **universal** scheduler with flexible 3-phase control (warm → main → cooldown). It can emulate classic schedules (warmup-stable-decay, cosine, etc.) through its configuration:
 
 ```toml
 [lr_scheduler]

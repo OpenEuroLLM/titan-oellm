@@ -343,19 +343,15 @@ class Attention(nn.Module):
 
 class FeedForward(nn.Module):
     """
-    FeedForward module
+    FeedForward module with SwiGLU activation.
+
+    Uses separate w1 (gate) and w3 (up) projections to avoid allocating a
+    single contiguous (batch, seq, 2*hidden_dim) activation tensor, which
+    reduces peak memory and fragmentation pressure under torch.compile.
 
     Args:
         dim (int): Input dimension.
         hidden_dim (int): Hidden dimension of the feedforward layer.
-        multiple_of (int): Value to ensure hidden dimension is a multiple of this value.
-        ffn_dim_multiplier (float | None): Custom multiplier for hidden dimension. Defaults to None.
-
-    Attributes:
-        w1 (Linear): Linear transformation for the first layer.
-        w2 (Linear): Linear transformation for the second layer.
-        w3 (Linear): Linear transformation for the third layer.
-
     """
 
     def __init__(
@@ -510,11 +506,6 @@ class Qwen3Model(nn.Module, ModelProtocol):
         self.norm = nn.RMSNorm(model_args.dim, eps=model_args.norm_eps)
 
         self.output = nn.Linear(model_args.dim, model_args.vocab_size, bias=False)
-
-        # Tie embedding and output weights if specified (must happen before FSDP
-        # so that FSDP sees a single shared parameter instead of two separate ones)
-        if model_args.enable_weight_tying:
-            self.output.weight = self.tok_embeddings.weight
 
     def init_weights(
         self,

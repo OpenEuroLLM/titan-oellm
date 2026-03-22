@@ -1,0 +1,271 @@
+[job]
+config_file = "/opt/titan-oellm/titan_oellm/models/gpt_plus/train_configs/gpt_plus.toml"
+dump_folder = "outputs/test_gptplus"
+description = "TorchTitan training for gpt_plus model"
+print_config = false
+custom_config_module = "titan_oellm.configs.oellm_job_config"
+continue_training = false
+
+[profiling]
+enable_profiling = false
+save_traces_folder = "profile_traces"
+profile_freq = 10
+profiler_active = 1
+profiler_warmup = 3
+enable_memory_snapshot = false
+save_memory_snapshot_folder = "memory_snapshot"
+
+[metrics]
+log_freq = 50
+enable_tensorboard = true
+disable_color_printing = true
+save_tb_folder = "tb"
+save_for_all_ranks = false
+enable_wandb = false
+
+[model]
+name = "gpt_plus"
+flavor = "debugmodel"
+hf_assets_path = "/home/joerg/workspace/data/huggingface/tokenizer/neox"
+tokenizer_path = "/home/joerg/workspace/data/huggingface/tokenizer/neox"
+converters = []
+print_after_conversion = false
+vocab_size = 50432
+mlp_layers = 2
+mlp_activation = "swiglu"
+qk_norm_type = "RMSNorm"
+qk_norm_scale_mode = "scalar"
+tie_embedding = false
+use_flex_attn = false
+attn_mask_type = "causal"
+attn_gate_type = "none"
+attn_gate_input = "x"
+attn_gate_activation = "sigmoid"
+attn_gate_lowrank_dim = 64
+attn_gate_bias = true
+qk_norm = true
+rope_theta = 1000000
+rope_scaling_factor = 8.0
+rope_low_freq_factor = 1.0
+rope_high_freq_factor = 4.0
+rope_original_max_position_embeddings = 8192
+head_dim = 128
+hidden_dim = 3072
+norm_eps = 1e-06
+depth_init = true
+enable_weight_tying = false
+use_complex_rope = false
+moe_enabled = false
+moe_inter_dim = 768
+
+[optimizer]
+name = "AdamW"
+lr = 0.0022
+beta1 = 0.9
+beta2 = 0.95
+eps = 1e-08
+weight_decay = 0.1
+implementation = "fused"
+early_step_in_backward = false
+
+[lr_scheduler]
+warmup_steps = 200
+decay_type = "linear"
+min_lr_factor = 0.0
+scheduler_type = "universal"
+stable_decay_ratio = 0.0
+lr_min_absolute = 1e-05
+warm_steps = 0
+warm_ratio = 0.1
+warm_direction = "up"
+warm_type = "linear"
+warm_start_ratio = 2.0
+main_decay_type = "cosine"
+main_decay_ratio = 0.0
+cooldown_steps = 0
+cooldown_ratio = 0.0
+cooldown_type = "cosine"
+
+[training]
+dataset = "oellm_dataset"
+local_batch_size = 2
+global_batch_size = -1
+seq_len = 512
+max_norm = 1.0
+steps = 10000
+enable_cpu_offload = false
+dtype = "float32"
+mixed_precision_param = "bfloat16"
+mixed_precision_reduce = "float32"
+gc_freq = 50
+gc_debug = false
+debug_moe_force_load_balance = false
+
+[training.dataloader]
+num_workers = 0
+persistent_workers = false
+pin_memory = false
+
+[parallelism]
+data_parallel_replicate_degree = 1
+data_parallel_shard_degree = -1
+fsdp_reshard_after_forward = "default"
+tensor_parallel_degree = 1
+disable_loss_parallel = false
+enable_async_tensor_parallel = false
+pipeline_parallel_degree = 1
+pipeline_parallel_first_stage_less_layers = 1
+pipeline_parallel_last_stage_less_layers = 1
+pipeline_parallel_schedule = "1F1B"
+pipeline_parallel_schedule_csv = ""
+pipeline_parallel_microbatch_size = 1
+pipeline_parallel_expert_parallel_overlap = true
+context_parallel_degree = 1
+context_parallel_rotate_method = "allgather"
+expert_parallel_degree = 1
+expert_tensor_parallel_degree = 1
+expert_parallel_comm_backend = "standard"
+enable_compiled_autograd = false
+
+[checkpoint]
+enable = false
+enable_ft_dataloader_checkpoints = true
+folder = "checkpoint"
+interval = 2000
+initial_load_model_only = true
+initial_load_in_hf = false
+initial_load_in_hf_quantized = false
+last_save_model_only = false
+last_save_in_hf = false
+export_dtype = "float16"
+async_mode = "disabled"
+keep_latest_k = 10
+load_step = -1
+exclude_from_loading = []
+enable_first_step_checkpoint = false
+create_seed_checkpoint = false
+load_only = false
+
+[activation_checkpoint]
+mode = "none"
+selective_ac_option = "op"
+per_op_sac_force_recompute_mm_shapes_by_fqns = [
+    "moe.router.gate",
+]
+early_stop = false
+memory_budget = 0.5
+visualize_memory_budget_pareto = false
+preserve_rng_state = false
+determinism_check = "default"
+debug = false
+
+[compile]
+enable = true
+components = [
+    "model",
+    "loss",
+]
+backend = "inductor"
+
+[quantize.linear.float8]
+enable_fsdp_float8_all_gather = false
+precompute_float8_dynamic_scale_for_fsdp = false
+filter_fqns = [
+    "output",
+]
+emulate = false
+
+[quantize.linear.mx]
+mxfp8_dim1_cast_kernel_choice = "triton"
+recipe_name = "mxfp8_cublas"
+filter_fqns = [
+    "output",
+]
+
+[quantize.grouped_mm.float8]
+fqns = []
+
+[quantize.grouped_mm.mx]
+recipe_name = "mxfp8"
+fqns = []
+
+[comm]
+init_timeout_seconds = 300
+train_timeout_seconds = 100
+trace_buf_size = 20000
+save_traces_folder = "comm_traces"
+save_traces_file_prefix = "rank_"
+mode = "default"
+
+[memory_estimation]
+enable = false
+disable_fake_mode = false
+
+[fault_tolerance]
+enable = false
+process_group = "gloo"
+process_group_timeout_ms = 10000
+replica_id = 0
+group_size = 0
+min_replica_size = 1
+
+[experimental]
+custom_import = "titan_oellm.models"
+custom_args_module = ""
+
+[validation]
+enable = true
+dataset = "c4_validation"
+local_batch_size = -1
+seq_len = 2048
+freq = 1000
+steps = -1
+dataloader = "MMapDataset"
+data_prefix = "/home/joerg/workspace/data/huggingface/openwebtext/tokenized_neox/valid_merged_text_document"
+max_eval_samples = 50000
+data_source = "offline"
+split_samples = 0
+split_seed = 42
+eval_mode = "concatenated"
+datasets = []
+
+[debug]
+deterministic = false
+deterministic_warn_only = false
+moe_force_load_balance = false
+
+[data]
+local_batch_size = 8
+seq_len = 2048
+min_doc_len = 128
+data_prefix = [
+    "/home/joerg/workspace/data/huggingface/openwebtext/tokenized_neox/merged_text_document",
+]
+chunks_dir = [
+    "/home/joerg/workspace/data/huggingface/openwebtext/tokenized_neox/merged_text_document_chunks",
+]
+dataloader = "DeterministicPackedDataset"
+seed = 42
+
+[sci_tokenizer]
+default_add_bos = true
+default_add_eos = false
+override_hf_bos_behavior = false
+override_hf_eos_behavior = false
+
+[parameter_logging]
+enabled = true
+log_interval = 1000
+log_parameters = true
+log_gradients = true
+log_optimizer_states = true
+log_gates = false
+include_patterns = []
+exclude_patterns = []
+
+[benchmarks]
+enable = false
+wikitext2_path = "/home/joerg/workspace/data/benchmarks/neox/wikitext2/wikitext2"
+wikitext103_path = "/home/joerg/workspace/data/benchmarks/neox/wikitext103/wikitext103"
+lambada_path = "/home/joerg/workspace/data/benchmarks/neox/lambada/lambada"
+batch_size = 8

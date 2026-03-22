@@ -174,6 +174,11 @@ def parallelize_qwen3_custom(
             enable_compile=model_compile_enabled,
         )
 
+    # Enable weight tying after applying parallelisms (matching upstream torchtitan)
+    if model.model_args.enable_weight_tying:
+        model.output.weight = model.tok_embeddings.weight
+        logger.info("Weight tying applied: output.weight = tok_embeddings.weight")
+
     return model
 
 
@@ -185,30 +190,21 @@ def apply_non_moe_tp(
     enable_async_tp: bool,
 ):
     """Apply tensor parallelism."""
-    # 1. Parallelize the embedding and shard its outputs (which are the first
-    # transformer block's inputs)
-    # 2. Parallelize the root norm layer over the sequence dim
-    # 3. Parallelize the final linear output layer (skip if tied to embedding)
-
-    # Check if weights are tied between embedding and output
-    weight_tying_enabled = model.tok_embeddings.weight is model.output.weight
-
+    # Parallelize embedding, norm, and output independently.
+    # Weight tying (output.weight = tok_embeddings.weight) is applied AFTER
+    # all parallelisms at the end of parallelize_qwen3_custom, matching upstream torchtitan.
     parallelize_plan = {
         "tok_embeddings": RowwiseParallel(
             input_layouts=Replicate(),
             output_layouts=Shard(1),
         ),
         "norm": SequenceParallel(),
-    }
-
-    # Only parallelize output separately if weights are not tied.
-    # When tied, output inherits the sharding from tok_embeddings.
-    if not weight_tying_enabled:
-        parallelize_plan["output"] = ColwiseParallel(
+        "output": ColwiseParallel(
             input_layouts=Shard(1),
             output_layouts=Shard(-1) if loss_parallel else Replicate(),
             use_local_output=not loss_parallel,
-        )
+        ),
+    }
 
     parallelize_module(model, tp_mesh, parallelize_plan)
 
@@ -288,5 +284,3 @@ def apply_non_moe_tp(
         f"Applied {'Float8 tensorwise ' if enable_float8_tensorwise_tp else ''}{'Async ' if enable_async_tp else ''}"
         "Tensor Parallelism to the model"
     )
-    if weight_tying_enabled:
-        logger.info("Weight tying detected: output layer inherits sharding from tok_embeddings")
