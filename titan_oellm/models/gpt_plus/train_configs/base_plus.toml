@@ -1,0 +1,159 @@
+# Base Configuration for gpt_plus model
+# This is a unified config for all clusters - paths are injected via cluster_config.py
+# Use with: python train.py --job.config_file=configs/base_plus.toml <cluster-specific-args>
+
+[job]
+dump_folder = "./outputs/torchtitan"
+description = "TorchTitan training for gpt_plus model"
+custom_config_module = "titan_oellm.configs.sci_job_config"
+
+[model]
+name = "gpt_plus"
+flavor = "0.5B"
+vocab_size = 50432  # Vocabulary size for embedding and output layers (must match tokenizer)
+# tokenizer_path is injected by cluster_config
+qk_norm_type = "RMSNorm"  # "QKNormPlus" or "RMSNorm"
+mlp_layers = 2  # Number of MLP layers: 2, 3, or 4
+mlp_activation = "swiglu"  # MLP activation: "swiglu" (gated) or "silu" (ungated)
+tie_embedding = false  # Tie embedding and output head weights (reduces params by vocab_size × dim)
+
+# FlexAttention for document-aware masking
+use_flex_attn = false  # Set to true for document masking
+attn_mask_type = "causal"  # Use "block_causal" for document-aware masking
+
+# Flash Attention for high-performance attention
+use_flash_attn = false  # Enable direct Flash Attention 2/3 (auto-selects FA3 on Hopper, FA2 otherwise)
+
+[metrics]
+log_freq = 500
+disable_color_printing = true
+enable_tensorboard = true
+save_tb_folder = "tb"
+
+# Parameter Logging Configuration
+[parameter_logging]
+enabled = true               # Disabled by default for production runs
+log_interval = 1000            # Log parameter stats every 500 steps
+log_parameters = true         # Log parameter statistics (max, min, norm, std)
+log_gradients = true          # Log gradient statistics
+log_optimizer_states = true   # Log AdamW optimizer statistics
+include_patterns = []         # Include all parameters (empty = include all)
+exclude_patterns = []         # Log all parameters including bias
+
+[training]
+dataset = "sci_dataset"
+local_batch_size = 8
+seq_len = 2048
+steps = 10000
+mixed_precision_param = "bfloat16"
+
+[optimizer]
+name = "AdamW"
+lr = 1e-3
+weight_decay = 0.1
+beta1 = 0.9
+beta2 = 0.95
+
+[lr_scheduler]
+# Scheduler type selection
+scheduler_type = "cosine"  # Options: "wsd", "wdd", "cosine"
+
+# Universal phase parameters (used by all schedulers)
+warmup_steps = 1000        # Absolute warmup steps
+decay_ratio = 0.3          # 30% of remaining steps for decay/annealing
+decay_type = "linear"      # Decay curve for WSD/WDD ("linear", "sqrt", "cosine")
+lr_min_absolute = 1e-5     # Absolute minimum learning rate
+
+# WDD-specific parameters (only used when scheduler_type = "wdd")
+stable_decay_ratio = 0.0   # Linear decay during stable phase (0.0 = no decay)
+
+# Warmdown parameters (used by "ou" and "doud" schedulers)
+warmdown_steps = 0         # Warmdown phase steps (0 = use warmup instead, >0 = use warmdown)
+warmdown_ratio = 2.0       # Starting LR multiplier (2.0 = start at 2x base LR)
+warmdown_decay_type = "sqrt"  # Warmdown decay curve: "linear", "cosine", "sqrt", "exp"
+
+# Cooldown parameters (used by "ou" and "doud" schedulers)
+cooldown_steps = 2000      # Explicit cooldown phase duration (Phase 3)
+cooldown_type = "cosine"   # Cooldown decay curve: "linear", "cosine", "sqrt", "exp"
+
+[normalizer]
+out_norm_dim_0 = false
+bounded = true
+normalize_full_tensor = false  # Global tensor normalization for tight exponent clustering (default: false)
+
+[parallelism]
+data_parallel_replicate_degree = 1
+data_parallel_shard_degree = -1
+tensor_parallel_degree = 1
+pipeline_parallel_degree = 1
+context_parallel_degree = 1
+enable_compiled_autograd = false  # Compatible with PyTorch 2.9+
+
+[compile]
+enable = true
+backend = "inductor"  # Workaround: torch.compile/Triton kernel tracing issue - test with eager backend
+components = ["model", "loss"]
+
+[activation_checkpoint]
+# Activation checkpointing mode: "none", "selective", "full", or "memory_budget"
+# - "none": No activation checkpointing (default for small models)
+# - "selective": Checkpoint every Nth layer or use op-level selective checkpointing
+# - "full": Checkpoint all transformer blocks (max memory savings)
+# - "memory_budget": Compiler-driven AC optimization (requires compile=true)
+mode = "none"
+
+# Selective AC option when mode="selective": integer N for every Nth layer, or "op" for op-level
+selective_ac_option = "op"
+
+# Stop recomputing early when all activations are rematerialized (minor optimization)
+early_stop = false
+
+# Memory budget for mode="memory_budget": 0.0 = max memory savings, 1.0 = max speed
+memory_budget = 0.5
+
+# Visualize memory/speed tradeoff pareto curve (generates SVG in dump_folder/memory_budget_pareto/)
+visualize_memory_budget_pareto = false
+
+[quantize.linear.float8]
+enable_fsdp_float8_all_gather = false
+precompute_float8_dynamic_scale_for_fsdp = false
+filter_fqns = ["output"]
+
+[checkpoint]
+enable = false
+folder = "checkpoint"
+interval = 2000
+last_save_model_only = false
+export_dtype = "float16"
+async_mode = "disabled" # ["disabled", "async", "async_with_pinned_mem"]
+
+# SciData configuration - paths are injected by cluster_config
+[data]
+# min_doc_len, data_prefix, chunks_dir, dataloader are injected by cluster_config
+# These defaults are overridden at runtime
+
+[validation]
+enable = true  # Enable validation during training (aligned with torchtitan v0.2.0)
+freq = 1000  # Frequency of validation evaluation (aligned with torchtitan v0.2.0)
+steps = -1  # Number of validation steps (-1 = full validation set, >0 = limit steps)
+# data_prefix is injected by cluster_config
+local_batch_size = -1  # Use training batch size
+max_eval_samples = 50000  # Total samples across all workers (-1 = full validation set)
+# dataloader is inherited from [data] section via cluster_config
+
+# Standard benchmarks (WikiText, LAMBADA)
+# Paths are automatically set via get_cli_args() from cluster_paths.toml
+[benchmarks]
+enable = true
+wikitext2_path = ""  # Path prefix for WikiText-2 (set via CLI from cluster_paths.toml)
+wikitext103_path = ""  # Path prefix for WikiText-103 (set via CLI from cluster_paths.toml)
+lambada_path = ""  # Path prefix for LAMBADA (set via CLI from cluster_paths.toml)
+batch_size = 8
+
+# SciTokenizer configuration
+[sci_tokenizer]
+default_add_bos = true
+default_add_eos = false
+
+[experimental]
+custom_import = "titan_oellm.models"
