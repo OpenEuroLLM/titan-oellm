@@ -427,6 +427,14 @@ class Model(BaseModel):
     hidden_dim: int | None = None
     max_seq_len: int | None = None
 
+    moe_num_experts: int = 32
+    moe_top_k: int = 8
+    moe_score_func: str = "softmax"
+    moe_route_norm: bool = True
+    moe_route_scale: float = 1.0
+    moe_score_before_experts: bool = False
+    moe_num_shared_experts: int = 0
+
     qkv_bias: bool = False
     mlp_bias: bool = False
 

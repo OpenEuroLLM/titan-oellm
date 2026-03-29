@@ -24,6 +24,7 @@ from titan_oellm.datasets.sci_dataloader import build_sci_dataloader
 from titan_oellm.datasets.sci_tokenizers.sci_tokenizer import build_sci_hf_tokenizer
 
 from .infra.parallelize import parallelize_qwen3_custom
+from torchtitan.distributed.pipeline_parallel import pipeline_llm
 from .model.args import Qwen3CustomModelArgs
 from .model.model import Qwen3Model
 from .model.state_dict_adapter import Qwen3StateDictAdapter
@@ -406,7 +407,7 @@ def get_train_spec() -> TrainSpec:
         model_cls=Qwen3Model,
         model_args=qwen3_custom_configs,
         parallelize_fn=parallelize_qwen3_custom,
-        pipelining_fn=None, 
+        pipelining_fn=pipeline_llm,
         build_optimizers_fn=build_optimizers_no_wd_biases,  # Exclude biases/norms from WD
         build_lr_schedulers_fn=build_lr_schedulers_auto,  # Universal LR scheduler
         build_dataloader_fn=build_sci_dataloader,  # Sci dataloader with MMap support

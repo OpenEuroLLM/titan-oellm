@@ -85,6 +85,23 @@ class Qwen3CustomModelArgs(BaseModelArgs):
         if hasattr(job_config.model, "hidden_dim")  and job_config.model.hidden_dim is not None:
             self.hidden_dim = job_config.model.hidden_dim
         
+        if hasattr(job_config.model, "moe_num_experts"):
+            self.moe_args.moe_num_experts = job_config.model.moe_num_experts
+        if hasattr(job_config.model, "moe_top_k"):
+            self.moe_args.top_k = job_config.model.moe_top_k
+        if hasattr(job_config.model, "moe_score_func"):
+            self.moe_args.score_func = job_config.model.moe_score_func
+        if hasattr(job_config.model, "moe_route_norm"):
+            self.moe_args.route_norm = job_config.model.moe_route_norm
+        if hasattr(job_config.model, "moe_num_shared_experts"):
+            self.moe_args.num_shared_experts = job_config.model.moe_num_shared_experts
+        if hasattr(job_config.model, "moe_route_scale"):
+            self.moe_args.route_scale = job_config.model.moe_route_scale
+        if hasattr(job_config.model, "moe_score_before_experts"):
+            self.moe_args.scale_before_experts = job_config.model.moe_score_before_experts
+
+
+
         seq_len = job_config.training.seq_len
         if seq_len > self.max_seq_len:
             logger.warning(
