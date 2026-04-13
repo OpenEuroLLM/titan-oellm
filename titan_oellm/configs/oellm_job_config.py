@@ -327,6 +327,12 @@ class Checkpoint(BaseCheckpoint):
     extra_steps: list[int] = field(default_factory=list)
     """Additional specific steps at which to save a checkpoint, regardless of interval."""
 
+    initial_step: int = -1
+    """Override the step counter after loading a model-only checkpoint.
+    When >= 0 and initial_load_model_only is true, the train_state step
+    will be set to this value after loading. Useful for running validation
+    at the correct step when the final checkpoint was saved model-only."""
+
 
 @dataclass
 class Compile(BaseCompile):
