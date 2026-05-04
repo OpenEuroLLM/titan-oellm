@@ -421,7 +421,9 @@ def build_sci_hf_tokenizer(job_config: JobConfig) -> SciHFTokenizer:
     Returns:
         SciHFTokenizer: Loaded tokenizer instance with intelligent BOS/EOS handling
     """
-    tokenizer = SciHFTokenizer(job_config.model.tokenizer_path)
+    tokenizer = SciHFTokenizer(
+        getattr(job_config.model, "hf_assets_path", None) or job_config.model.tokenizer_path
+    )
 
     # Apply configuration overrides for BOS/EOS behavior
     if hasattr(job_config, 'sci_tokenizer'):

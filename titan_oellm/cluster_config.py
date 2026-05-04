@@ -163,7 +163,10 @@ def get_benchmark_paths(
             - wikitext2_path: Path prefix for WikiText-2 (without .bin/.idx)
             - wikitext103_path: Path prefix for WikiText-103
             - lambada_path: Path prefix for LAMBADA
-            Returns empty paths if benchmarks not configured for tokenizer/cluster.
+
+    Raises:
+        ValueError: If benchmarks not found for tokenizer/cluster
+        FileNotFoundError: If validate=True and benchmark files don't exist
     """
     if cluster is None:
         cluster = detect_cluster()
@@ -211,7 +214,7 @@ def get_benchmark_paths(
             print(
                 f"Warning: Benchmark files not found for {', '.join(missing)}. "
                 f"Benchmarks will be skipped. Run scripts/download_benchmarks.py to enable them.",
-                file=sys.stderr
+                file=sys.stderr,
             )
 
     return paths
@@ -374,36 +377,49 @@ def get_cli_args(
 
     paths = get_paths(dataset, tokenizer, cluster, user=user)
 
+    config_dataloader = None
+    try:
+        import tomllib
+
+        with open(config_path, "rb") as fh:
+            parsed = tomllib.load(fh)
+        config_dataloader = parsed.get("data", {}).get("dataloader")
+    except Exception:
+        config_dataloader = None
+
     # Get benchmark paths (validation handled by get_benchmark_paths)
     benchmark_paths = get_benchmark_paths(tokenizer, cluster, user=user, validate=validate)
 
-    return _format_cli_args(paths, benchmark_paths, config_path)
+    return _format_cli_args(paths, benchmark_paths, config_path, config_dataloader)
 
 
-def _format_cli_args(paths: dict, benchmark_paths: dict, config_path: str = "") -> str:
-    """Format resolved paths into CLI args string.
-
-    Skips empty values to avoid confusing tyro's argument parser.
-    """
+def _format_cli_args(paths: dict, benchmark_paths: dict, config_path: str = "", config_dataloader: str = "") -> str:
+    """Format resolved paths into CLI args string."""
+    data_overrides = ""
     parts = []
     if config_path:
         parts.append(f"--job.config_file={config_path}")
-    parts.append(f"--model.tokenizer_path={paths['tokenizer_path']}")
-    parts.append(f"--data.data_prefix={paths['data_prefix']}")
-    parts.append(f"--data.chunks_dir={paths['chunks_dir']}")
-    parts.append(f"--data.dataloader={paths['dataloader']}")
-    parts.append(f"--data.min_doc_len={paths['min_doc_len']}")
-    parts.append(f"--validation.data_prefix={paths['validation_prefix']}")
+    if config_dataloader != "SynthPregenDataset":
+        data_overrides = (
+            f"--data.data_prefix={paths['data_prefix']} "
+            f"--data.chunks_dir={paths['chunks_dir']} "
+            f"--data.dataloader={paths['dataloader']} "
+            f"--data.min_doc_len={paths['min_doc_len']} "
+            f"--validation.data_prefix={paths['validation_prefix']} "
+        )
 
-    # Only add benchmark paths if they're not empty (avoids tyro parsing issues)
-    if benchmark_paths.get('wikitext2_path'):
-        parts.append(f"--benchmarks.wikitext2_path={benchmark_paths['wikitext2_path']}")
-    if benchmark_paths.get('wikitext103_path'):
-        parts.append(f"--benchmarks.wikitext103_path={benchmark_paths['wikitext103_path']}")
-    if benchmark_paths.get('lambada_path'):
-        parts.append(f"--benchmarks.lambada_path={benchmark_paths['lambada_path']}")
-
-    return " ".join(parts)
+    return (
+        " ".join(parts)
+        + " "
+        + (
+            f"--model.hf_assets_path={paths['tokenizer_path']} "
+            f"--model.tokenizer_path={paths['tokenizer_path']} "
+            f"{data_overrides}"
+            f"--benchmarks.wikitext2_path={benchmark_paths['wikitext2_path']} "
+            f"--benchmarks.wikitext103_path={benchmark_paths['wikitext103_path']} "
+            f"--benchmarks.lambada_path={benchmark_paths['lambada_path']}"
+        )
+    )
 
 
 def validate_paths(

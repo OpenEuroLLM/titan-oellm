@@ -103,7 +103,7 @@ def parallelize_qwen3_custom(
     if parallel_dims.tp_enabled or parallel_dims.ep_enabled:
         dual_pipe_v = get_dual_pipe_v_flag(job_config, parallel_dims)
 
-        tp_mesh = parallel_dims.get_optional_mesh("tp")
+        tp_mesh = parallel_dims.get_mesh("tp")
         apply_moe_ep_tp(
             model,
             tp_mesh=tp_mesh,
@@ -124,21 +124,8 @@ def parallelize_qwen3_custom(
         )
 
     # turn on per-TransformerBlock compile after AC wrapping and before FSDP
-    # EP + compile + AC is incompatible with FSDP2+compile: the compiled graph
-    # embeds FSDP all-gather ops only for the directly compiled FSDP unit. With EP,
-    # expert params live in a separate inner FSDP unit → backward mixes DTensors
-    # from EP-sharded experts with plain tensors from the compiled attention graph,
-    # causing "aten.mm.default got mixed torch.Tensor and DTensor". Skip compile
-    # when EP is active; EP itself replaces AllGather with AllToAll, recovering
-    # significant throughput without needing compile.
-    if model_compile_enabled and not parallel_dims.ep_enabled:
+    if model_compile_enabled:
         apply_compile(model, job_config.compile, parallel_dims.ep_enabled)
-    elif model_compile_enabled and parallel_dims.ep_enabled:
-        logger.info(
-            "EP mode: skipping torch.compile (EP + compile + AC incompatible due to "
-            "FSDP2 all-gather embedding in compiled graph conflicting with EP inner FSDP). "
-            "Training in eager mode."
-        )
 
     if parallel_dims.fsdp_enabled:
         # apply FSDP or HSDP, potentially with Context Parallel
@@ -188,11 +175,10 @@ def parallelize_qwen3_custom(
             enable_compile=model_compile_enabled,
         )
 
-    # Enable weight tying after applying parallelisms
-    # pyrefly: ignore [missing-attribute]
+    # Enable weight tying after applying parallelisms (matching upstream torchtitan)
     if model.model_args.enable_weight_tying:
-        # pyrefly: ignore [missing-attribute]
         model.output.weight = model.tok_embeddings.weight
+        logger.info("Weight tying applied: output.weight = tok_embeddings.weight")
 
     return model
 
@@ -205,26 +191,23 @@ def apply_non_moe_tp(
     enable_async_tp: bool,
 ):
     """Apply tensor parallelism."""
-    # 1. Parallelize the embedding and shard its outputs (which are the first
-    # transformer block's inputs)
-    # 2. Parallelize the root norm layer over the sequence dim
-    # 3. Parallelize the final linear output layer
-    parallelize_module(
-        model,
-        tp_mesh,
-        {
-            "tok_embeddings": RowwiseParallel(
-                input_layouts=Replicate(),
-                output_layouts=Shard(1),
-            ),
-            "norm": SequenceParallel(),
-            "output": ColwiseParallel(
-                input_layouts=Shard(1),
-                output_layouts=Shard(-1) if loss_parallel else Replicate(),
-                use_local_output=not loss_parallel,
-            ),
-        },
-    )
+    # Parallelize embedding, norm, and output independently.
+    # Weight tying (output.weight = tok_embeddings.weight) is applied AFTER
+    # all parallelisms at the end of parallelize_qwen3_custom, matching upstream torchtitan.
+    parallelize_plan = {
+        "tok_embeddings": RowwiseParallel(
+            input_layouts=Replicate(),
+            output_layouts=Shard(1),
+        ),
+        "norm": SequenceParallel(),
+        "output": ColwiseParallel(
+            input_layouts=Shard(1),
+            output_layouts=Shard(-1) if loss_parallel else Replicate(),
+            use_local_output=not loss_parallel,
+        ),
+    }
+
+    parallelize_module(model, tp_mesh, parallelize_plan)
 
     # Parallel styles used for transformer block linear weights and their
     # inputs may be different for float8 linears with tensorwise scaling.
@@ -271,7 +254,6 @@ def apply_non_moe_tp(
             "ffn_norm": SequenceParallel(),
         }
 
-        # pyrefly: ignore [missing-attribute]
         if not transformer_block.moe_enabled:
             layer_plan.update(
                 {
@@ -280,8 +262,8 @@ def apply_non_moe_tp(
                         desired_input_layouts=(Replicate(),),
                     ),
                     "feed_forward.w1": colwise_parallel(),
-                    "feed_forward.w2": rowwise_parallel(output_layouts=Shard(1)),
                     "feed_forward.w3": colwise_parallel(),
+                    "feed_forward.w2": rowwise_parallel(output_layouts=Shard(1)),
                 }
             )
 

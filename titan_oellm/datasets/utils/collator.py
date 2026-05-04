@@ -401,7 +401,7 @@ def collate_synth_function(
         max_cu_seqlens_size: Fixed size for cu_seqlens tensor to avoid torch.compile recompilations.
                             Should be: batch_size * (seq_len // min_doc_len + 1) + 1
     """
-    has_mask = "mask" in batch[0]
+    has_mask = "mask" in batch[0] or "loss_mask" in batch[0]
     has_metadata = "set_name" in batch[0]
 
     src_seq = []

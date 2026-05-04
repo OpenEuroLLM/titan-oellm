@@ -298,7 +298,8 @@ class StreamingDatasetChunker:
                  buffer_size: int = 1000,
                  progress_interval: int = 500000,
                  resume: bool = True,
-                 force_reprocess: bool = False):
+                 force_reprocess: bool = False,
+                 val_percent: float = 0.0):
 
         # Validate input specification (exactly one must be provided)
         provided_inputs = sum([
@@ -327,6 +328,7 @@ class StreamingDatasetChunker:
         self.num_flush_writers = num_flush_writers
         self.resume = resume
         self.force_reprocess = force_reprocess
+        self.val_fraction = val_percent / 100.0
 
         # Set number of workers
         if num_workers is None:
@@ -336,6 +338,11 @@ class StreamingDatasetChunker:
 
         # Setup directories
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        if self.val_fraction > 0:
+            self.chunks_dir = self.output_dir / "chunks"
+            self.chunks_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            self.chunks_dir = self.output_dir
 
         # Setup temp directory
         if temp_dir:
@@ -362,6 +369,8 @@ class StreamingDatasetChunker:
         logger.info(f"  Target chunks: {num_chunks}")
         logger.info(f"  Buffer size: {buffer_size}")
         logger.info(f"  Temp dir: {self.temp_dir}")
+        if self.val_fraction > 0:
+            logger.info(f"  Validation split: {val_percent}%")
 
     def discover_datasets_in_folder(self, folder_path: str) -> List[str]:
         """Discover all idx/bin dataset pairs in a folder"""
@@ -806,7 +815,7 @@ class StreamingDatasetChunker:
         Returns:
             True if chunk is valid and complete, False otherwise
         """
-        chunk_prefix = self.output_dir / f"chunk_{chunk_id:04d}"
+        chunk_prefix = self.chunks_dir / f"chunk_{chunk_id:04d}"
         idx_path = f"{chunk_prefix}.idx"
         bin_path = f"{chunk_prefix}.bin"
 
@@ -886,7 +895,8 @@ class StreamingDatasetChunker:
                                           temp_dir: Path,
                                           flush_queue,
                                           error_queue,
-                                          progress_queue) -> Dict[str, Any]:
+                                          progress_queue,
+                                          val_fraction: float = 0.0) -> Dict[str, Any]:
         """
         Worker function: Read dataset consecutively and distribute to random temp chunks
         """
@@ -958,8 +968,11 @@ class StreamingDatasetChunker:
                         offset=sequence_pointer
                     )
 
-                    # Randomly select target temp chunk
-                    target_chunk_id = worker_rng.randint(0, num_chunks)
+                    # Randomly select target temp chunk (or validation set)
+                    if val_fraction > 0 and worker_rng.random() < val_fraction:
+                        target_chunk_id = num_chunks  # validation "chunk"
+                    else:
+                        target_chunk_id = worker_rng.randint(0, num_chunks)
 
                     # Create sequence info
                     seq_info = SequenceInfo(
@@ -1056,7 +1069,8 @@ class StreamingDatasetChunker:
                                    temp_dir: Path,
                                    output_dir: Path,
                                    seed: int,
-                                   num_workers: int) -> Dict[str, Any]:
+                                   num_workers: int,
+                                   output_prefix: str = None) -> Dict[str, Any]:
         """
         Shuffle a temporary chunk and write final chunk (combines all worker outputs)
         """
@@ -1148,7 +1162,10 @@ class StreamingDatasetChunker:
         chunk_rng.shuffle(shuffled_indices)
 
         # Write final chunk in shuffled order
-        chunk_prefix = output_dir / f"chunk_{chunk_id:04d}"
+        if output_prefix is not None:
+            chunk_prefix = output_dir / output_prefix
+        else:
+            chunk_prefix = output_dir / f"chunk_{chunk_id:04d}"
         idx_path = f"{chunk_prefix}.idx"
         bin_path = f"{chunk_prefix}.bin"
 
@@ -1244,42 +1261,48 @@ class StreamingDatasetChunker:
         if progress_bar is not None:
             progress_bar.close()
 
-    def _validate_output(self, validation_results: List[Dict], 
-                        finalization_results: List[Dict]) -> bool:
+    def _validate_output(self, validation_results: List[Dict],
+                        finalization_results: List[Dict],
+                        val_result: Optional[Dict] = None) -> bool:
         """Validate the output chunks and return True if validation passes"""
         logger.info("=== VALIDATING OUTPUT ===")
-        
+
         # Check metadata file exists
         metadata_file = self.output_dir / "chunking_metadata.txt"
         if not metadata_file.exists():
             logger.error("Metadata file not found!")
             return False
         logger.info("✓ Metadata file exists")
-        
-        # Verify sequence counts
+
+        # Verify sequence counts (chunks + validation must equal original)
         original_sequences = sum(v['sequence_count'] for v in validation_results)
-        final_sequences = sum(r['sequences'] for r in finalization_results)
-        
-        logger.info(f"Original sequences: {original_sequences:,}")
-        logger.info(f"Final sequences:    {final_sequences:,}")
-        
+        chunk_sequences = sum(r['sequences'] for r in finalization_results)
+        val_sequences = val_result['sequences'] if val_result else 0
+        final_sequences = chunk_sequences + val_sequences
+
+        logger.info(f"Original sequences:   {original_sequences:,}")
+        logger.info(f"Training sequences:   {chunk_sequences:,}")
+        if val_result:
+            logger.info(f"Validation sequences: {val_sequences:,}")
+        logger.info(f"Total sequences:      {final_sequences:,}")
+
         if original_sequences != final_sequences:
             logger.error(f"Sequence count mismatch! Difference: {abs(original_sequences - final_sequences):,}")
             return False
         logger.info("✓ Sequence counts match")
-        
+
         # Count chunk files
-        idx_files = list(self.output_dir.glob("chunk_*.idx"))
-        bin_files = list(self.output_dir.glob("chunk_*.bin"))
-        
+        idx_files = list(self.chunks_dir.glob("chunk_*.idx"))
+        bin_files = list(self.chunks_dir.glob("chunk_*.bin"))
+
         logger.info(f"Found {len(idx_files)} .idx files")
         logger.info(f"Found {len(bin_files)} .bin files")
-        
+
         if len(idx_files) != len(bin_files):
             logger.error("Mismatch between idx and bin file counts")
             return False
         logger.info("✓ Chunk file counts consistent")
-        
+
         # Validate ALL chunk files
         logger.info("Validating ALL chunk file structures...")
         chunks_to_validate = sorted(idx_files)
@@ -1317,6 +1340,16 @@ class StreamingDatasetChunker:
                 logger.error(error_msg)
                 validation_errors.append(error_msg)
 
+        # Validate validation set files if present
+        if val_result and val_result['sequences'] > 0:
+            val_idx = self.output_dir / "validation.idx"
+            val_bin = self.output_dir / "validation.bin"
+            if not val_idx.exists() or not val_bin.exists():
+                validation_errors.append("Validation set files (validation.idx/bin) missing")
+            else:
+                logger.info(f"✓ Validation set: {val_sequences:,} sequences, "
+                           f"{val_bin.stat().st_size / 1024**3:.4f} GB")
+
         if validation_errors:
             logger.error(f"Found {len(validation_errors)} validation errors")
             for err in validation_errors[:10]:  # Show first 10 errors
@@ -1326,15 +1359,21 @@ class StreamingDatasetChunker:
             return False
 
         logger.info(f"✓ Validated {len(chunks_to_validate)} chunk files successfully")
-        
+
         # Count non-empty chunks
         non_empty = sum(1 for r in finalization_results if r['sequences'] > 0)
         logger.info(f"✓ Non-empty chunks: {non_empty}/{self.num_chunks}")
-        
+
         # Calculate total size
-        total_size = sum(f.stat().st_size for f in bin_files) / (1024**3)
-        logger.info(f"✓ Total output size: {total_size:.2f} GB")
-        
+        chunks_size = sum(f.stat().st_size for f in bin_files) / (1024**3)
+        logger.info(f"✓ Training chunks size: {chunks_size:.2f} GB")
+        if val_result and val_result['sequences'] > 0:
+            val_size = (self.output_dir / "validation.bin").stat().st_size / (1024**3)
+            logger.info(f"✓ Validation set size: {val_size:.4f} GB")
+            logger.info(f"✓ Total output size: {chunks_size + val_size:.2f} GB")
+        else:
+            logger.info(f"✓ Total output size: {chunks_size:.2f} GB")
+
         logger.info("=== VALIDATION PASSED ===")
         return True
 
@@ -1413,7 +1452,8 @@ class StreamingDatasetChunker:
                         self.temp_dir,
                         flush_manager.flush_queue,
                         self.error_queue,
-                        self.progress_queue
+                        self.progress_queue,
+                        self.val_fraction
                     )
                     futures.append(future)
 
@@ -1504,7 +1544,7 @@ class StreamingDatasetChunker:
                             chunks_to_process.append(chunk_id)
                         else:
                             # Read existing chunk info to add to results
-                            chunk_prefix = self.output_dir / f"chunk_{chunk_id:04d}"
+                            chunk_prefix = self.chunks_dir / f"chunk_{chunk_id:04d}"
                             idx_path = f"{chunk_prefix}.idx"
 
                             try:
@@ -1540,7 +1580,7 @@ class StreamingDatasetChunker:
                         self.shuffle_and_finalize_chunk,
                         chunk_id,
                         self.temp_dir,
-                        self.output_dir,
+                        self.chunks_dir,
                         self.seed,
                         len(self.input_paths)
                     )
@@ -1553,12 +1593,26 @@ class StreamingDatasetChunker:
                     result = future.result()
                     finalization_results.append(result)
 
+            # Finalize validation set if enabled
+            val_result = None
+            if self.val_fraction > 0:
+                logger.info("=== STEP 4b: FINALIZING VALIDATION SET ===")
+                val_result = self.shuffle_and_finalize_chunk(
+                    chunk_id=self.num_chunks,  # validation uses chunk_id = num_chunks
+                    temp_dir=self.temp_dir,
+                    output_dir=self.output_dir,
+                    seed=self.seed,
+                    num_workers=len(self.input_paths),
+                    output_prefix="validation"
+                )
+                logger.info(f"Validation set: {val_result['sequences']} sequences")
+
             # Step 5: Write metadata
             logger.info("=== STEP 5: WRITING METADATA ===")
-            self._write_process_metadata(validation_results, distribution_results, finalization_results)
+            self._write_process_metadata(validation_results, distribution_results, finalization_results, val_result)
 
             # Step 6: Validate output
-            validation_passed = self._validate_output(validation_results, finalization_results)
+            validation_passed = self._validate_output(validation_results, finalization_results, val_result)
 
             # Step 7: Cleanup temp directory if validation passed
             if validation_passed:
@@ -1572,11 +1626,18 @@ class StreamingDatasetChunker:
                 logger.warning(f"  Temp directory: {self.temp_dir}")
 
             # Final summary
-            total_final_sequences = sum(r['sequences'] for r in finalization_results)
+            total_chunk_sequences = sum(r['sequences'] for r in finalization_results)
+            val_sequences = val_result['sequences'] if val_result else 0
+            total_final_sequences = total_chunk_sequences + val_sequences
             non_empty_chunks = sum(1 for r in finalization_results if r['sequences'] > 0)
 
             logger.info(f"=== CHUNKING COMPLETE ===")
-            logger.info(f"  Final sequences: {total_final_sequences}")
+            logger.info(f"  Training sequences: {total_chunk_sequences}")
+            if val_result:
+                logger.info(f"  Validation sequences: {val_sequences}")
+                actual_val_pct = 100.0 * val_sequences / total_final_sequences if total_final_sequences > 0 else 0
+                logger.info(f"  Validation percentage: {actual_val_pct:.2f}% (requested: {self.val_fraction * 100:.1f}%)")
+                logger.info(f"  Chunks directory: {self.chunks_dir}")
             logger.info(f"  Non-empty chunks: {non_empty_chunks}/{self.num_chunks}")
             logger.info(f"  Output directory: {self.output_dir}")
 
@@ -1630,7 +1691,8 @@ class StreamingDatasetChunker:
     def _write_process_metadata(self,
                                 validation_results: List[Dict],
                                 distribution_results: List[Dict],
-                                finalization_results: List[Dict]) -> None:
+                                finalization_results: List[Dict],
+                                val_result: Optional[Dict] = None) -> None:
         """Write comprehensive metadata about the chunking process"""
         metadata_path = self.output_dir / "chunking_metadata.txt"
 
@@ -1645,7 +1707,10 @@ class StreamingDatasetChunker:
             f.write(f"  Number of flush writers: {self.num_flush_writers}\n")
             f.write(f"  Input datasets: {len(self.input_paths)}\n")
             f.write(f"  Buffer size: {self.buffer_size}\n")
-            f.write(f"  Progress interval: {self.progress_interval}\n\n")
+            f.write(f"  Progress interval: {self.progress_interval}\n")
+            if self.val_fraction > 0:
+                f.write(f"  Validation split: {self.val_fraction * 100:.1f}%\n")
+            f.write("\n")
 
             f.write("Input datasets:\n")
             for validation in validation_results:
@@ -1656,15 +1721,41 @@ class StreamingDatasetChunker:
 
             f.write("Final chunk statistics:\n")
             non_empty = sum(1 for r in finalization_results if r['sequences'] > 0)
+            chunk_sequences = sum(r['sequences'] for r in finalization_results)
             f.write(f"  Non-empty chunks: {non_empty}/{self.num_chunks}\n")
-            f.write(f"  Empty chunks: {self.num_chunks - non_empty}\n\n")
+            f.write(f"  Empty chunks: {self.num_chunks - non_empty}\n")
+            f.write(f"  Training sequences: {chunk_sequences}\n")
+            if self.val_fraction > 0:
+                chunks_bin_files = list(self.chunks_dir.glob("chunk_*.bin"))
+                chunks_size_gb = sum(f.stat().st_size for f in chunks_bin_files) / (1024**3)
+                f.write(f"  Training size: {chunks_size_gb:.2f} GB\n")
+            f.write("\n")
+
+            # Validation set statistics
+            if val_result:
+                val_sequences = val_result['sequences']
+                f.write("Validation set statistics:\n")
+                f.write(f"  Validation sequences: {val_sequences}\n")
+                val_bin = self.output_dir / "validation.bin"
+                if val_bin.exists():
+                    val_size_gb = val_bin.stat().st_size / (1024**3)
+                    f.write(f"  Validation size: {val_size_gb:.4f} GB\n")
+                total = chunk_sequences + val_sequences
+                actual_pct = 100.0 * val_sequences / total if total > 0 else 0
+                f.write(f"  Actual validation percentage: {actual_pct:.2f}%\n")
+                f.write(f"  Requested validation percentage: {self.val_fraction * 100:.1f}%\n")
+                f.write("\n")
 
             # Data integrity verification
             original_sequences = sum(v['sequence_count'] for v in validation_results)
-            final_sequences = sum(r['sequences'] for r in finalization_results)
+            val_sequences = val_result['sequences'] if val_result else 0
+            final_sequences = chunk_sequences + val_sequences
             f.write(f"Data integrity:\n")
             f.write(f"  Original sequences: {original_sequences}\n")
-            f.write(f"  Final sequences: {final_sequences}\n")
+            f.write(f"  Training sequences: {chunk_sequences}\n")
+            if val_result:
+                f.write(f"  Validation sequences: {val_sequences}\n")
+            f.write(f"  Total sequences: {final_sequences}\n")
             f.write(f"  Integrity check: {'PASS' if original_sequences == final_sequences else 'FAIL'}\n")
 
     def __enter__(self):
@@ -1715,6 +1806,8 @@ def main():
                         help="Disable resume functionality")
     parser.add_argument("--force-reprocess", action="store_true",
                         help="Clear temp and output directories, start fresh")
+    parser.add_argument("--val-percent", type=float, default=0.0,
+                        help="Hold out X%% of sequences as validation set (default: 0 = disabled, e.g. 1.0 for 1%%)")
 
     args = parser.parse_args()
 
@@ -1740,6 +1833,7 @@ def main():
                 progress_interval=args.progress_interval,
                 resume=args.resume,
                 force_reprocess=args.force_reprocess,
+                val_percent=args.val_percent,
         ) as chunker:
 
             if args.validate_only:

@@ -1,11 +1,11 @@
 # Titan-OELLM
 
 A TorchTitan-based framework for training large language models on HPC systems.
-Focus on research and deveoplent of new architectures and optimization methods. 
+Focus on research and development of new architectures and optimization methods.
 
 ## Features
 
-- **Custom Model Architectures**: Easily modiufy architecturers based on default implementations such as Qwen3
+- **Custom Model Architectures**: Easily modify architectures based on default implementations such as Qwen3
 - **HPC Optimization**: SLURM scripts for different clusters
 - **Flexible Configuration**: TOML-based configs with cluster-specific path resolution
 - **Validation During Training**: Comprehensive validation with TensorBoard integration
@@ -70,35 +70,52 @@ vim user/$TITAN_USER/cluster_paths.toml
 
 ### 4. Run Training
 
+#### Local Testing (Recommended for Development)
+
 ```bash
-# Set your user (REQUIRED)
-export TITAN_USER=your_username
+export TITAN_USER=example
 
-# Submit training job
-sbatch slurm_juwels.sh
+# Run locally (on your machine or interactive node)
+bash submit_job.sh --local
 
-# Or with custom dataset/config
-DATASET=fineweb_edu CONFIG=qwen3_custom.toml sbatch slurm_juwels.sh
+# With custom dataset and config
+DATASET=test_dataset TOKENIZER=neox CONFIG=user/example/configs/debug.toml bash submit_job.sh --local
+
+# On cluster interactive node (after srun --pty bash)
+CLUSTER=juwels DATASET=slimpajama_627b TOKENIZER=neox CONFIG=user/example/configs/debug.toml bash submit_job.sh --local
+```
+
+#### Cluster Submission (SLURM)
+
+```bash
+export TITAN_USER=example
+export CLUSTER=juwels  # or capella, jupiter
+
+# Submit training job (auto-selects slurm/<CLUSTER>.sh)
+DATASET=fineweb_edu CONFIG=qwen3_custom.toml bash submit_job.sh
+
+# Explicit script path also works
+bash submit_job.sh slurm/juwels.sh
 ```
 
 ## Models
 
 | Model | Description | Config |
 |-------|-------------|--------|
-| **gpt_plus** | GPT with QKNormPlus attention normalization and RoPE scaling | `base_plus.toml` |
 | **qwen3_custom** | Qwen3 custom implementation with MoE support | `qwen3_custom.toml` |
 
 ## Configuration
 
 ### Environment Variables
 
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `TITAN_USER` | Your username for user-specific configs | Yes |
-| `DATASET` | Dataset name from cluster_paths.toml | No (default: slimpajama_627b) |
-| `TOKENIZER` | Tokenizer name from cluster_paths.toml | No (default: neox) |
-| `CONFIG` | Base config file | No (default: base_plus.toml) |
-| `CLUSTER` | Override cluster detection | No (auto-detected) |
+| Variable | Description | Default | Required |
+|----------|-------------|---------|----------|
+| `TITAN_USER` | Username for user-specific configs | - | Yes |
+| `CLUSTER` | Cluster name (local, juwels, capella, jupiter) | local (for --local), auto-detect (for SLURM) | No |
+| `DATASET` | Dataset name from cluster_paths.toml | test_dataset (local), slimpajama_627b (SLURM) | No |
+| `TOKENIZER` | Tokenizer name from cluster_paths.toml | neox | No |
+| `CONFIG` | Config file path | user/$TITAN_USER/configs/debug.toml (local) | No |
+| `NPROC` | Number of GPUs for local execution | 1 | No |
 
 ### Directory Structure
 
@@ -112,8 +129,11 @@ titan-oellm/
 ├── user/                  # User-specific configurations
 │   └── example/           # Template configs (copy these)
 ├── scripts/               # Utility scripts
-├── slurm_*.sh             # Cluster-specific job scripts
-└── torchtitan/            # TorchTitan submodule (v0.2.0)
+├── slurm/                 # SLURM job scripts per cluster
+│   ├── juwels.sh
+│   └── capella.sh
+├── submit_job.sh          # Job submission wrapper
+└── torchtitan/            # TorchTitan submodule (v0.2.1)
 ```
 
 ### User Configuration
@@ -121,6 +141,23 @@ titan-oellm/
 Each user needs their own `user/<username>/cluster_paths.toml` with:
 
 - **Cluster paths**: Output directories, cache locations
+- **Tokenizer paths**: Per-tokenizer, per-cluster configurations  
+- **Dataset paths**: Per-dataset, per-tokenizer, per-cluster configurations
+- **Benchmark paths**: Optional evaluation benchmark locations
+
+Copy template from `user/example/` and customize for your environment:
+
+```bash
+cp user/example/cluster_paths.toml.example user/myname/cluster_paths.toml
+cp user/example/config.toml.example user/myname/configs/debug.toml
+# Edit both files with your paths
+```
+
+Then run training:
+
+```bash
+TITAN_USER=myname CONFIG=user/myname/configs/debug.toml bash submit_job.sh --local
+```
 - **Tokenizers**: Paths to tokenizer files for each cluster
 - **Datasets**: Paths to training/validation data
 - **Benchmarks**: Paths to evaluation datasets (WikiText, LAMBADA)
@@ -148,20 +185,9 @@ apptainer exec --nv titan.sif \
     --output-dir /path/to/benchmarks
 ```
 
-## LR Schedulers
+## LR Scheduler
 
-The framework supports multiple learning rate schedulers:
-
-| Scheduler | Description |
-|-----------|-------------|
-| `wsd` | Warmup-Stable-Decay (TorchTitan default) |
-| `wdd` | Warmup with gradual decay during stable phase |
-| `cosine` | Cosine annealing with warmup |
-| `universal` | 3-phase scheduler (warm -> main -> cooldown) |
-
-### Universal Scheduler
-
-The universal scheduler provides flexible 3-phase control:
+The framework uses a unified **universal** scheduler with flexible 3-phase control (warm → main → cooldown). It can emulate classic schedules (warmup-stable-decay, cosine, etc.) through its configuration:
 
 ```toml
 [lr_scheduler]
@@ -179,6 +205,42 @@ main_decay_ratio = 0.2
 # Phase 3: Cooldown
 cooldown_steps = 2000
 cooldown_type = "cosine"
+```
+
+
+
+## Development
+
+### Update TorchTitan Version
+
+To update the TorchTitan submodule to a newer version:
+
+```bash
+# Navigate to the torchtitan submodule
+cd torchtitan
+
+# Fetch latest tags and branches
+git fetch --all --tags
+
+# Checkout desired version (e.g., v0.3.0)
+git checkout v0.2.1
+
+# Verify the version
+git describe --tags
+
+# Go back to project root
+cd ..
+
+# Commit the submodule update
+git add torchtitan
+git commit -m "Update torchtitan to v0.3.0"
+```
+
+After updating TorchTitan, rebuild the container:
+
+```bash
+# Update container definition if needed (titan_0.3.0.def)
+apptainer build --fakeroot titan_juwels_0.2.1.sif titan_0.2.1.def
 ```
 
 
