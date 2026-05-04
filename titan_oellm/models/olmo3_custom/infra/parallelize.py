@@ -9,6 +9,7 @@
 
 import torch
 import torch._inductor.config
+import torch.distributed as dist
 import torch.nn as nn
 
 from torch.distributed.device_mesh import DeviceMesh
@@ -33,10 +34,18 @@ from torchtitan.models.llama4.infra.parallelize import (
 )
 from torchtitan.tools.logging import logger
 
+from titan_oellm.models.olmo3_custom.model.model import register_ring_attn_cp_group
 
-# for selective op activation checkpointing
+
+# Selective-op activation checkpointing save list.
+# Save only ops that are *expensive to recompute*: attention kernels (softmax +
+# matmul, plus cross-GPU comms in the ring case) and the reduce-scatter result.
+# Linears (aten.mm.default) and inductor_compiled_code regions were removed:
+# at long sequence lengths (e.g. 32k), saving every mm output was costing ~3 GB
+# per layer (~96 GB/rank for a 32-layer 7B), making selective AC use *more*
+# memory than full AC. Recomputing linears is cheap; this trims memory ~10×
+# while keeping attention saved.
 _op_sac_save_list = {
-    torch.ops.aten.mm.default,
     torch.ops.aten._scaled_dot_product_efficient_attention.default,
     torch.ops.aten._scaled_dot_product_flash_attention.default,
     torch.ops.aten._scaled_dot_product_cudnn_attention.default,
@@ -49,7 +58,8 @@ _op_sac_save_list = {
     torch.ops.aten.max.default,
     torch._higher_order_ops.flex_attention,
     torch.ops.torch_attn._varlen_attn.default,
-    torch._higher_order_ops.inductor_compiled_code,
+    # ring attention: save output so the backward never re-runs cross-GPU comms
+    torch.ops.ring_flash_attn.zigzag_varlen.default,
 }
 
 
@@ -66,8 +76,11 @@ def parallelize_olmo3_custom(
         """
 
     attn_type = getattr(model.model_args, "attn_type", "sdpa")
-    if job_config.parallelism.context_parallel_degree > 1 and attn_type != "sdpa":
-        raise NotImplementedError("CP support is only supported for SDPA.")
+    if job_config.parallelism.context_parallel_degree > 1 and attn_type not in (
+        "sdpa",
+        "ring_varlen",
+    ):
+        raise NotImplementedError("CP support is only supported for SDPA or ring_varlen.")
 
     model_compile_enabled = (
         job_config.compile.enable and "model" in job_config.compile.components
@@ -131,7 +144,10 @@ def parallelize_olmo3_custom(
     # causing "aten.mm.default got mixed torch.Tensor and DTensor". Skip compile
     # when EP is active; EP itself replaces AllGather with AllToAll, recovering
     # significant throughput without needing compile.
+    ring_varlen = attn_type == "ring_varlen"
     if model_compile_enabled and not parallel_dims.ep_enabled:
+        # ring_varlen uses a torch.library.custom_op with register_fake, which makes
+        # Dynamo/inductor traceable. Compile is now allowed for ring_varlen.
         apply_compile(model, job_config.compile, parallel_dims.ep_enabled)
     elif model_compile_enabled and parallel_dims.ep_enabled:
         logger.info(
@@ -194,7 +210,49 @@ def parallelize_olmo3_custom(
         # pyrefly: ignore [missing-attribute]
         model.output.weight = model.tok_embeddings.weight
 
+    # For ring_varlen, inject the CP process group into every Attention layer so
+    # the kernel knows which ranks to communicate with.  This must happen after
+    # all parallelisms (TP, FSDP) have been applied so the process group is final.
+    if attn_type == "ring_varlen" and parallel_dims.cp_enabled:
+        cp_pg = parallel_dims.get_mesh("cp").get_group()
+        for module in model.modules():
+            # pyrefly: ignore [missing-attribute]
+            if hasattr(module, "cp_pg") and hasattr(module, "attn_type"):
+                if module.attn_type == "ring_varlen":
+                    module.cp_pg = cp_pg
+        # Register in the module-level registry used by the custom_op so that
+        # selective-AC op mode can save ring-attention outputs without passing
+        # ProcessGroup as a custom_op argument (which is not allowed).
+        register_ring_attn_cp_group(cp_pg)
+        logger.info("Injected CP process group into ring_varlen Attention layers.")
+
+        # Aggregate weight grads across CP. The ring kernel handles activation
+        # comms, but weight grads are computed from each rank's local token
+        # shard only. FSDP's mesh here is [dp_replicate, fsdp] (no CP), so
+        # without this hook each CP rank ends up with a partial gradient.
+        # Registered after apply_fsdp so it fires after FSDP's reduce-scatter.
+        _apply_cp_grad_reduce_hooks(model, cp_pg)
+
     return model
+
+
+def _apply_cp_grad_reduce_hooks(model: nn.Module, cp_pg) -> None:
+    state = {"enabled": True}
+    model._cp_grad_reduce_state = state  # trainer toggles this for grad accum
+
+    def hook(param: torch.Tensor) -> None:
+        if not state["enabled"]:
+            return
+        grad = param.grad
+        if grad is None:
+            return
+        local_grad = grad._local_tensor if hasattr(grad, "_local_tensor") else grad
+        dist.all_reduce(local_grad, op=dist.ReduceOp.SUM, group=cp_pg)
+
+    for param in model.parameters():
+        if param.requires_grad:
+            param.register_post_accumulate_grad_hook(hook)
+    logger.info("Registered CP gradient SUM hook on model parameters.")
 
 
 def apply_non_moe_tp(
