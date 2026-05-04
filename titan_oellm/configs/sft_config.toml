@@ -19,7 +19,7 @@ tokenizer_path = "/leonardo_work/OELLM_prod2026/users/ajha0001/titan-oellm/asset
 # Attention configuration
 use_flex_attn = false
 attn_mask_type = "causal"
-use_flash_attn = false   # Enabled to improve attention performance
+use_flash_attn = true   # Enable for faster attention and lower memory
 
 [training]
 dataset = "sft_dataset"
@@ -49,13 +49,14 @@ global_batch_size = 64   # Increased from 32 for higher throughput
 # dataset_split = "train"  # Which split to use (train/test/validation)
 
 # OPTION 2: Use local JSONL file (default)
-data_prefix = "./data/sft_alpaca.jsonl"
+# data_prefix = "./data/sft_alpaca.jsonl"
 
 # OPTION 3: Reasoning datasets (uncomment to use)
 # For math reasoning:
-# data_prefix = "openai/gsm8k"
-# dataset_split = "train"
-# instruction_format = "reasoning_steps"  # or "cot" or "problem_solution"
+data_prefix = "openai/gsm8k"
+dataset_split = "train"
+instruction_format = "reasoning_steps"  # or "cot" or "problem_solution"
+hf_dataset_config = "main"
 #
 # For general reasoning:
 # data_prefix = "TIGER-Lab/MathInstruct"
@@ -80,7 +81,7 @@ data_prefix = "./data/sft_alpaca.jsonl"
 # - "TIGER-Lab/MathInstruct" (math with reasoning) - use instruction_format = "reasoning_steps"
 # - "reasoning-machines/open-o1-orca-math" (o1-style reasoning) - use instruction_format = "reasoning_steps"
 # - "kaist-ai/orca-math-word-problems" - use instruction_format = "reasoning_steps"
-instruction_format = "auto"
+# instruction_format = "auto"
 
 # Optional settings:
 # text_field = "text"  # For plain text datasets, which field has the text
@@ -117,23 +118,23 @@ enable_tensorboard = true
 save_tb_folder = "tb_sft"
 
 [validation]
-enable = true
-freq = 500  # Validation frequency in steps
+enable = false
+# freq = 500  # Validation frequency in steps
 # For SFT, validation can use a held-out instruction dataset
 # data_prefix = "./data/sft_validation.jsonl"
+
+[compile]
+enable = true
+backend = "inductor"
+components = ["model", "loss"]
 
 [parallelism]
 # Adjust based on your cluster configuration
 data_parallel_replicate_degree = 1
-data_parallel_shard_degree = 2
-tensor_parallel_degree = 2
+data_parallel_shard_degree = 1
+context_parallel_degree = 1
+tensor_parallel_degree = 1
 pipeline_parallel_degree = 1
-
-
-
-# For multi-GPU training, increase these appropriately:
-# data_parallel_shard_degree = 4  # For 4 GPUs with FSDP
-# tensor_parallel_degree = 2      # For model parallelism
 
 [activation_checkpoint]
 mode = "none"  # ["none", "selective", "full"]

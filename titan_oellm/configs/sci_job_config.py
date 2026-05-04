@@ -59,6 +59,16 @@ class SciData:
     text_field: str = ""
     """Field name for text-only datasets (optional)"""
 
+    prepacked_dataset: bool = False
+    """If true, data_prefix is treated as a local offline prepacked SFT dataset directory."""
+
+    sequential_index_cache_path: str = ""
+    """Path to cache the sequential packing index (.npy). Rank 0 builds it on first run,
+    subsequent runs (and all other ranks) load it instantly."""
+
+    packing_strategy: str = "none"
+    """SFT packing strategy: 'none' (pad) or 'obfd' (online best-fit decreasing)"""
+
     chunks_dir: str = ""
     """Directory containing data chunks for ChunkedMMapDataset"""
 
@@ -363,6 +373,10 @@ class Model(BaseModel):
     use_flash_attn: bool = False
     """Enable direct Flash Attention 2/3 (auto-selects FA3 on Hopper, FA2 otherwise)"""
 
+    attn_type: str = ""
+    """Explicit attention backend: 'sdpa', 'flex', or 'varlen'.
+    When set, takes priority over use_flex_attn / use_flash_attn derivation."""
+
     # Qwen3-specific parameters
     qk_norm: bool = True
     """Enable QK normalization in attention (Qwen3)"""
@@ -372,12 +386,26 @@ class Model(BaseModel):
     # RoPE scaling parameters (gpt_plus and other models supporting long context)
     rope_scaling_factor: float = 8.0
     """RoPE scaling multiplier for extending context length (default: 8.0)"""
+    rope_old_context_len: int = 8192
+    """Original pre-scaled context length used by YaRN-style scaling."""
+    rope_beta_fast: int = 32
+    """Fast beta parameter for YaRN inverse-frequency blending."""
+    rope_beta_slow: int = 1
+    """Slow beta parameter for YaRN inverse-frequency blending."""
     rope_low_freq_factor: float = 1.0
     """Scaling for low-frequency (long-wavelength) RoPE bands (default: 1.0)"""
     rope_high_freq_factor: float = 4.0
     """Scaling for high-frequency (short-wavelength) RoPE bands (default: 4.0)"""
     rope_original_max_position_embeddings: int = 8192
     """Original maximum position embeddings before scaling (default: 8192)"""
+
+    # OLMo-3 attention pattern controls
+    sliding_window: int = 4096
+    """Sliding attention window size used by layers configured as sliding attention."""
+    layer_types: list[str] = field(default_factory=list)
+    """Optional per-layer attention modes, e.g. [\"sliding_attention\", \"full_attention\", ...]."""
+    eos_id: int = 100257
+    """End-of-sequence token id for model-specific tokenizer behavior."""
 
     head_dim: int = 128
     """Dimension per attention head (Qwen3)"""
@@ -393,6 +421,11 @@ class Model(BaseModel):
     """Enable Mixture of Experts (Qwen3 MoE variants)"""
     moe_inter_dim: int = 768
     """MoE intermediate dimension (Qwen3 MoE variants)"""
+
+    use_liger_kernels: bool = False
+    """Enable Liger fused Triton kernels: fused linear+CE LM head, RMSNorm, and
+    SwiGLU MLP. Frees ~13 GB at vocab=100278/seq=32k from CE alone, plus per-layer
+    speedups from RMSNorm/SwiGLU. Trainer wires labels into model.forward for CE."""
 
 
 @dataclass

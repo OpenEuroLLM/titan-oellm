@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 """
 Quick smoke test for reasoning SFT on a small model + small HF dataset.
 
@@ -12,9 +11,6 @@ Example:
 import argparse
 import sys
 from pathlib import Path
-
-import os
-import debugpy
 
 # if int(os.environ["RANK"]) == 0:
 #     debugpy.listen(("0.0.0.0", 4242))
@@ -84,54 +80,54 @@ def main() -> None:
     overrides = [
         "--job.config_file",
         args.config,
-        "--model.name",
-        args.model_name,
-        "--model.flavor",
-        args.model_flavor,
-        "--model.tokenizer_path",
-        str(hf_assets_path),
-        "--training.dataset",
-        "sft_dataset",
-        "--training.steps",
-        str(args.steps),
-        "--training.seq_len",
-        str(args.seq_len),
-        "--training.local_batch_size",
-        str(args.batch_size),
-        "--training.global_batch_size",
-        str(args.global_batch_size),
-        "--data.data_prefix",
-        args.dataset,
-        "--data.dataset_split",
-        "train",
-        "--data.instruction_format",
-        args.instruction_format,
-        "--metrics.log_freq",
-        "1",
-        "--checkpoint.no-enable",  # Disable checkpointing
-        "--validation.no-enable",  # Disable validation
+    #     "--model.name",
+    #     args.model_name,
+    #     "--model.flavor",
+    #     args.model_flavor,
+    #     "--model.tokenizer_path",
+    #     str(hf_assets_path),
+    #     "--training.dataset",
+    #     "sft_dataset",
+    #     "--training.steps",
+    #     str(args.steps),
+    #     "--training.seq_len",
+    #     str(args.seq_len),
+    #     "--training.local_batch_size",
+    #     str(args.batch_size),
+    #     "--training.global_batch_size",
+    #     str(args.global_batch_size),
+    #     "--data.data_prefix",
+    #     args.dataset,
+    #     "--data.dataset_split",
+    #     "train",
+    #     "--data.instruction_format",
+    #     args.instruction_format,
+    #     "--metrics.log_freq",
+    #     "1",
+    #     "--checkpoint.no-enable",  # Disable checkpointing
+    #     "--validation.no-enable",  # Disable validation
     ]
 
     if args.dataset_config:
         overrides.extend(["--data.hf_dataset_config", args.dataset_config])
 
     # Add parallelism overrides
-    overrides.extend([
-        "--parallelism.data_parallel_replicate_degree",
-        str(args.dp_replicate),
-        "--parallelism.data_parallel_shard_degree",
-        str(args.dp_shard),
-        "--parallelism.tensor_parallel_degree",
-        str(args.tp),
-        "--parallelism.pipeline_parallel_degree",
-        str(args.pp),
-        "--parallelism.context_parallel_degree",
-        str(args.cp),
-        "--parallelism.expert_parallel_degree",
-        str(args.ep),
-        "--parallelism.expert_tensor_parallel_degree",
-        str(args.etp),
-    ])
+    # overrides.extend([
+    #     "--parallelism.data_parallel_replicate_degree",
+    #     str(args.dp_replicate),
+    #     "--parallelism.data_parallel_shard_degree",
+    #     str(args.dp_shard),
+    #     "--parallelism.tensor_parallel_degree",
+    #     str(args.tp),
+    #     "--parallelism.pipeline_parallel_degree",
+    #     str(args.pp),
+    #     "--parallelism.context_parallel_degree",
+    #     str(args.cp),
+    #     "--parallelism.expert_parallel_degree",
+    #     str(args.ep),
+    #     "--parallelism.expert_tensor_parallel_degree",
+    #     str(args.etp),
+    # ])
 
     sys.argv = [sys.argv[0]] + overrides
     
