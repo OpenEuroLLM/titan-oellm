@@ -32,6 +32,26 @@ try:
         global _ring_attn_cp_group
         _ring_attn_cp_group = group
 
+    def _compute_ring_half_indices(cu_seqlens: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Compute zigzag half-indices eagerly (outside torch.compile) as bool tensors.
+
+        get_half_index calls .item() on cu_seqlens values, which are data-dependent
+        and cause dynamo to fail when traced inside the compiled region. Call this
+        function before entering the model forward (e.g. in post_dataloading_process).
+        """
+        n = int(cu_seqlens[-1])
+        device = cu_seqlens.device
+        hi0 = _get_half_index(cu_seqlens, front=True)
+        hi1 = _get_half_index(cu_seqlens, front=False)
+        if isinstance(hi0, slice):
+            t0 = torch.zeros(n, dtype=torch.bool, device=device)
+            t0[hi0] = True
+            t1 = torch.zeros(n, dtype=torch.bool, device=device)
+            t1[hi1] = True
+        else:
+            t0, t1 = hi0.to(device), hi1.to(device)
+        return t0, t1
+
     # Register as a proper torch custom op so that:
     #   1. The selective-AC checkpoint policy can recognise it as an op to SAVE
     #      (preventing expensive cross-GPU ring-attention recomputation in op mode).
@@ -39,6 +59,8 @@ try:
     #      fullgraph torch.compile on the surrounding model code.
     # Returns (out, softmax_lse) so setup_context can save lse for the backward
     # without re-running the forward pass.
+    # half_index0/1 are passed as tensor inputs (precomputed before compile) to
+    # avoid _get_half_index's data-dependent .item() calls inside the traced graph.
     @torch.library.custom_op("ring_flash_attn::zigzag_varlen", mutates_args=())
     def _zigzag_ring_varlen_op(
         q: torch.Tensor,
@@ -47,13 +69,13 @@ try:
         cu_seqlens: torch.Tensor,
         max_seqlen: int,
         softmax_scale: float,
+        half_index0: torch.Tensor,
+        half_index1: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         assert _ring_attn_cp_group is not None, (
             "ring_flash_attn CP group not registered — call register_ring_attn_cp_group "
             "from parallelize_olmo3_custom before running the model."
         )
-        half_index0 = _get_half_index(cu_seqlens, front=True)
-        half_index1 = _get_half_index(cu_seqlens, front=False)
         out, lse = _zigzag_ring_varlen_forward(
             _ring_attn_cp_group, q, k, v, cu_seqlens, max_seqlen,
             half_index0, half_index1,
@@ -62,7 +84,7 @@ try:
         return out, lse
 
     @_zigzag_ring_varlen_op.register_fake
-    def _zigzag_ring_varlen_op_fake(q, k, v, cu_seqlens, max_seqlen, softmax_scale):
+    def _zigzag_ring_varlen_op_fake(q, k, v, cu_seqlens, max_seqlen, softmax_scale, half_index0, half_index1):
         # out: (total_seqlen, n_heads, head_dim) — same as q
         # lse: (n_heads, total_seqlen) — log-sum-exp from flash attention
         n_heads = q.shape[1]
@@ -71,34 +93,57 @@ try:
         return torch.empty_like(q), lse
 
     def _zigzag_setup_context(ctx, inputs, output):
-        q, k, v, cu_seqlens, max_seqlen, softmax_scale = inputs
+        # half_index0/1 are precomputed bool tensors passed as inputs — no
+        # _get_half_index call here, which avoids data-dependent .item() under compile.
+        q, k, v, cu_seqlens, max_seqlen, softmax_scale, half_index0, half_index1 = inputs
         out, lse = output
-        half_index0 = _get_half_index(cu_seqlens, front=True)
-        half_index1 = _get_half_index(cu_seqlens, front=False)
-        ctx.is_half_index_tensor = isinstance(half_index0, torch.Tensor)
-        if ctx.is_half_index_tensor:
-            ctx.save_for_backward(q, k, v, out, lse, cu_seqlens, half_index0, half_index1)
-        else:
-            ctx.save_for_backward(q, k, v, out, lse, cu_seqlens)
-            ctx.half_index0 = half_index0
-            ctx.half_index1 = half_index1
+        ctx.save_for_backward(q, k, v, out, lse, cu_seqlens, half_index0, half_index1)
         ctx.max_seqlen = max_seqlen
         ctx.softmax_scale = softmax_scale
 
-    def _zigzag_backward(ctx, dout, _dlse):
-        # _dlse is the grad w.r.t. lse — lse is only used internally so this is zeros.
-        if ctx.is_half_index_tensor:
-            q, k, v, out, lse, cu_seqlens, half_index0, half_index1 = ctx.saved_tensors
-        else:
-            q, k, v, out, lse, cu_seqlens = ctx.saved_tensors
-            half_index0 = ctx.half_index0
-            half_index1 = ctx.half_index1
+    # Register the backward as its own custom op so that aot_autograd's joint
+    # tracer (make_fx / proxy tensors) sees it as an opaque black box.
+    # Without this, the tracer enters _zigzag_ring_varlen_backward → get_half_lse
+    # (@torch.jit.script) which calls .item() on cu_seqlens and fails with
+    # GuardOnDataDependentSymNode even when torch.compiler.disable is set, because
+    # torch.compiler.disable only gates dynamo, not make_fx tracing.
+    @torch.library.custom_op("ring_flash_attn::zigzag_varlen_bwd", mutates_args=())
+    def _zigzag_ring_varlen_bwd_op(
+        dout: torch.Tensor,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        out: torch.Tensor,
+        lse: torch.Tensor,
+        cu_seqlens: torch.Tensor,
+        max_seqlen: int,
+        half_index0: torch.Tensor,
+        half_index1: torch.Tensor,
+        softmax_scale: float,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         dq, dk, dv = _zigzag_ring_varlen_backward(
             _ring_attn_cp_group, dout, q, k, v, out, lse,
-            cu_seqlens, ctx.max_seqlen, half_index0, half_index1,
-            softmax_scale=ctx.softmax_scale, dropout_p=0.0, causal=True,
+            cu_seqlens, max_seqlen, half_index0, half_index1,
+            softmax_scale=softmax_scale, dropout_p=0.0, causal=True,
         )
-        return dq, dk, dv, None, None, None  # no grad for cu_seqlens, max_seqlen, softmax_scale
+        return dq, dk, dv
+
+    @_zigzag_ring_varlen_bwd_op.register_fake
+    def _zigzag_ring_varlen_bwd_op_fake(
+        dout, q, k, v, out, lse, cu_seqlens, max_seqlen,
+        half_index0, half_index1, softmax_scale,
+    ):
+        return torch.empty_like(q), torch.empty_like(k), torch.empty_like(v)
+
+    def _zigzag_backward(ctx, dout, _dlse):
+        # _dlse is the grad w.r.t. lse — lse is only used internally so this is zeros.
+        q, k, v, out, lse, cu_seqlens, half_index0, half_index1 = ctx.saved_tensors
+        dq, dk, dv = _zigzag_ring_varlen_bwd_op(
+            dout, q, k, v, out, lse, cu_seqlens,
+            ctx.max_seqlen, half_index0, half_index1, ctx.softmax_scale,
+        )
+        # no grad for cu_seqlens, max_seqlen, softmax_scale, half_index0, half_index1
+        return dq, dk, dv, None, None, None, None, None
 
     _zigzag_ring_varlen_op.register_autograd(_zigzag_backward, setup_context=_zigzag_setup_context)
 
@@ -110,6 +155,9 @@ except ImportError:
 
     def register_ring_attn_cp_group(group: dist.ProcessGroup) -> None:  # type: ignore[misc]
         pass
+
+    def _compute_ring_half_indices(cu_seqlens: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:  # type: ignore[misc]
+        raise ImportError("ring_flash_attn is not installed")
 
 try:
     from liger_kernel.transformers.fused_linear_cross_entropy import (
@@ -148,6 +196,8 @@ def _make_rms_norm(dim: int, eps: float, use_liger: bool) -> nn.Module:
         return norm
     return nn.RMSNorm(dim, eps=eps)
 
+from typing import NamedTuple
+
 from torchtitan.components.tokenizer import BaseTokenizer
 from torchtitan.models.attention import (
     create_attention_mask,
@@ -163,6 +213,21 @@ from torchtitan.models.attention import (
 from torchtitan.models.moe import MoE
 from torchtitan.protocols.model import AttentionMasksType
 from torchtitan.protocols.train_spec import ModelProtocol
+
+
+class RingVarlenMetadata(NamedTuple):
+    """VarlenMetadata extended with precomputed zigzag half-indices for ring attention.
+
+    half_index0/1 must be computed eagerly (before torch.compile) via
+    _compute_ring_half_indices, because get_half_index calls .item() on
+    cu_seqlens which is data-dependent and breaks dynamo tracing.
+    """
+    cu_seq_q: torch.Tensor
+    cu_seq_k: torch.Tensor
+    max_q: object  # int or SymInt
+    max_k: object
+    half_index0: torch.Tensor
+    half_index1: torch.Tensor
 
 from .args import Olmo3CustomModelArgs
 
@@ -473,11 +538,13 @@ class Attention(nn.Module):
                 )
             case "ring_varlen":
                 # Ring attention: each rank holds a zigzag-sharded slice of the
-                # sequence.  Per-rank cu_seqlens are already set in VarlenMetadata
-                # by SFTTrainer.post_dataloading_process.  The ring kernel handles
-                # all cross-rank K/V communication internally via group.
-                assert isinstance(attention_masks, VarlenMetadata), (
-                    "ring_varlen attention requires VarlenMetadata attention_masks"
+                # sequence.  Per-rank cu_seqlens and precomputed half indices are
+                # set in RingVarlenMetadata by SFTTrainer.post_dataloading_process.
+                # half_index0/1 must be precomputed eagerly (before torch.compile)
+                # because get_half_index uses data-dependent .item() calls.
+                assert isinstance(attention_masks, RingVarlenMetadata), (
+                    "ring_varlen attention requires RingVarlenMetadata — "
+                    "use _compute_ring_half_indices in post_dataloading_process"
                 )
                 assert self.cp_pg is not None, (
                     "ring_varlen requires cp_pg to be set by parallelize_olmo3_custom"
@@ -491,10 +558,10 @@ class Attention(nn.Module):
                 xq_packed = xq.transpose(1, 2).reshape(-1, n_local_heads, self.head_dim)
                 xk_packed = xk.transpose(1, 2).reshape(-1, n_local_heads, self.head_dim)
                 xv_packed = xv.transpose(1, 2).reshape(-1, n_local_heads, self.head_dim)
-                # cu_seqlens is already on GPU — moved in SFTTrainer.post_dataloading_process
-                # to avoid a CPU→GPU transfer inside the compiled graph.
+                # cu_seqlens and half indices are already on GPU.
                 cu_seqlens = attention_masks.cu_seq_q
-                max_seqlen = int(attention_masks.max_q)
+                max_seqlen = attention_masks.max_q
+                torch._check_is_size(max_seqlen)
                 output, _lse = _zigzag_ring_varlen_op(
                     xq_packed,
                     xk_packed,
@@ -502,6 +569,8 @@ class Attention(nn.Module):
                     cu_seqlens,
                     max_seqlen,
                     self.scaling,
+                    attention_masks.half_index0,
+                    attention_masks.half_index1,
                 )
             case "sdpa":
                 assert attention_masks is None

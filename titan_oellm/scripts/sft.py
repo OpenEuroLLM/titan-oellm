@@ -44,6 +44,10 @@ from torchtitan.models.attention import VarlenMetadata
 from torchtitan.tools.logging import logger, init_logger
 
 from titan_oellm.distributed.ring_attention import RingAttentionZigZagLoadBalancer
+from titan_oellm.models.olmo3_custom.model.model import (
+    RingVarlenMetadata,
+    _compute_ring_half_indices,
+)
 
 
 class RankZeroFilter(logging.Filter):
@@ -93,6 +97,13 @@ class SFTTrainer(Trainer):
             raise NotImplementedError(
                 "use_liger_kernels + context_parallel is not supported yet. "
                 "Run with context_parallel_degree=1 or disable use_liger_kernels."
+            )
+        if self._use_liger and self._use_ring_varlen_cp:
+            raise NotImplementedError(
+                "use_liger_kernels + ring_varlen context_parallel is not supported: "
+                "LigerFusedLinearCrossEntropyLoss computes a local-shard mean, "
+                "which produces incorrect gradients across CP ranks. "
+                "Disable use_liger_kernels or set context_parallel_degree=1."
             )
         if self._use_liger and self.parallel_dims.pp_enabled:
             raise NotImplementedError(
@@ -199,12 +210,17 @@ class SFTTrainer(Trainer):
                 # CPU→GPU transfer inside the traced region (which breaks fullgraph).
                 per_rank_cu_seqlens = extra["cu_doc_lens"].to(inputs.device)
                 per_rank_max_seqlen = int(extra["max_doc_len"])
+                # Compute zigzag half-indices eagerly (before torch.compile) because
+                # get_half_index uses data-dependent .item() calls that break dynamo.
+                half_index0, half_index1 = _compute_ring_half_indices(per_rank_cu_seqlens)
                 extra_kwargs: dict[str, Any] = {
-                    "attention_masks": VarlenMetadata(
+                    "attention_masks": RingVarlenMetadata(
                         cu_seq_q=per_rank_cu_seqlens,
                         cu_seq_k=per_rank_cu_seqlens,
                         max_q=per_rank_max_seqlen,
                         max_k=per_rank_max_seqlen,
+                        half_index0=half_index0,
+                        half_index1=half_index1,
                     )
                 }
             else:
