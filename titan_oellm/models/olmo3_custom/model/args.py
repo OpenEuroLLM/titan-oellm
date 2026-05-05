@@ -94,6 +94,9 @@ class Olmo3CustomModelArgs(BaseModelArgs):
         return result
 
     def _maybe_override(self, name: str, value):
+        if value is None:
+            # None means "not set by user" — don't overwrite the flavor default.
+            return
         default = _SCI_MODEL_DEFAULTS.get(name)
         if default is not None and value == default and getattr(self, name) != default:
             # Avoid silently replacing OLMo flavor values with generic config defaults.
