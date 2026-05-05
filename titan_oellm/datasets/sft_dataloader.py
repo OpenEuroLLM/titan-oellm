@@ -863,7 +863,7 @@ class InstructionDataset(Dataset):
             <|im_start|>assistant
             {assistant}<|im_end|>
         """
-        messages = example.get("messages", [])
+        messages = example.get("messages") or []
 
         normalized_messages = []
         for msg in messages:
@@ -1265,17 +1265,19 @@ def build_sft_dataloader(
     use_sequential = packing_strategy == 'sequential'
 
     # Attention config — needed for sequential packing collate selection.
-    use_flash_attn  = bool(getattr(job_config.model, 'use_flash_attn', False))
+    attn_type       = getattr(job_config.model, 'attn_type', 'sdpa')
     attn_mask_type  = getattr(job_config.model, 'attn_mask_type', 'causal')
     use_doc_masking = use_sequential and attn_mask_type == 'block_causal'
+    # varlen/ring_varlen need cu_seqlens from the collate; SDPA uses a 4D mask instead.
+    use_varlen_collate = attn_type in ('varlen', 'ring_varlen')
 
     logger.info(
         f"Building SFT dataloader: "
         f"source={hf_dataset_name or data_source}, "
         f"format={instruction_format}, "
         f"packing={packing_strategy}, "
-        f"attn={attn_mask_type}, "
-        f"flash={use_flash_attn}, "
+        f"attn={attn_type}, "
+        f"attn_mask={attn_mask_type}, "
         f"batch_size={batch_size}, "
         f"seq_len={seq_len}"
     )
@@ -1315,11 +1317,11 @@ def build_sft_dataloader(
                 min_doc_len = getattr(job_config.data, 'min_doc_len', 1)
                 max_cu_seqlens_size = (
                     batch_size * (seq_len // max(1, min_doc_len) + 2) + 1
-                    if use_flash_attn else None
+                    if use_varlen_collate else None
                 )
-                collate_fn = lambda batch, _seq=seq_len, _pad=pad_id, _fa=use_flash_attn, _mc=max_cu_seqlens_size: (
+                collate_fn = lambda batch, _seq=seq_len, _pad=pad_id, _vc=use_varlen_collate, _mc=max_cu_seqlens_size: (
                     _collate_sft_doc_mask(batch, seq_len=_seq, pad_id=_pad,
-                                          use_flash_attention=_fa, max_cu_seqlens_size=_mc)
+                                          use_flash_attention=_vc, max_cu_seqlens_size=_mc)
                 )
             else:
                 # sequential packing without block-causal: use standard causal attention
