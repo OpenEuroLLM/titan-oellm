@@ -136,6 +136,10 @@ class SFTTrainer(Trainer):
         loss_mask = input_dict.pop('loss_mask', None)
         cu_seqlens = input_dict.pop('cu_seqlens', None)
         max_seqlen = input_dict.pop('max_seqlen', None)
+        # Pop attention_masks if the dataloader pre-computed it (SDPA doc-mask path);
+        # the base class re-derives and sets it in extra_kwargs, so having it in
+        # extra_inputs too causes a duplicate keyword argument error.
+        precomputed_attention_masks = input_dict.pop('attention_masks', None)
 
         # Validate input tensors before calling parent
         inputs_raw = input_dict.get("input")
@@ -218,6 +222,10 @@ class SFTTrainer(Trainer):
             inputs, labels_out, extra_inputs, extra_kwargs = super().post_dataloading_process(
                 input_dict, labels
             )
+            # If the dataloader pre-built the attention mask (SDPA doc-mask path),
+            # prefer it over the one re-derived by the base class.
+            if precomputed_attention_masks is not None:
+                extra_kwargs["attention_masks"] = precomputed_attention_masks
 
         # Apply loss masking if provided by dataloader
         if self.mask_prompt and loss_mask is not None:
@@ -372,7 +380,7 @@ def create_sft_config_template():
 [job]
 dump_folder = "./outputs/sft_run"
 description = "Supervised Fine-Tuning with TorchTitan"
-custom_config_module = "titan_oellm.configs.sci_job_config"
+custom_config_module = "titan_oellm.configs.oellm_job_config"
 
 [model]
 name = "gpt_plus"  # or "qwen3_custom"

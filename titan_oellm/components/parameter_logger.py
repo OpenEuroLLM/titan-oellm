@@ -53,7 +53,7 @@ class ParameterStatsLogger:
     ):
         # Convert from dataclass config if needed (simplified)
         if hasattr(config, 'enabled'):
-            # This is a dataclass config from sci_job_config
+            # This is a dataclass config from oellm_job_config
             self.config = ParameterLoggingConfig(
                 enabled=config.enabled,
                 log_interval=config.log_interval,

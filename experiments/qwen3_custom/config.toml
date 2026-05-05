@@ -3,7 +3,7 @@ config_file = "/opt/titan-oellm/titan_oellm/configs/qwen3_custom.toml"
 dump_folder = "./outputs"
 description = "default job"
 print_config = false
-custom_config_module = "titan_oellm.configs.sci_job_config"
+custom_config_module = "titan_oellm.configs.oellm_job_config"
 experiment_folder = "qwen3_custom"
 continue_training = false
 
@@ -39,7 +39,6 @@ qk_norm_scale_mode = "scalar"
 tie_embedding = false
 use_flex_attn = false
 attn_mask_type = "causal"
-use_flash_attn = false
 qk_norm = true
 rope_theta = 1000000
 rope_scaling_factor = 8.0

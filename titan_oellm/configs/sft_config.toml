@@ -4,7 +4,7 @@
 [job]
 dump_folder = "./outputs/sft_run"
 description = "Supervised Fine-Tuning with instruction dataset"
-custom_config_module = "titan_oellm.configs.sci_job_config"
+custom_config_module = "titan_oellm.configs.oellm_job_config"
 
 [model]
 name = "gpt_plus"  # Model architecture to fine-tune
@@ -19,7 +19,6 @@ tokenizer_path = "/leonardo_work/OELLM_prod2026/users/ajha0001/titan-oellm/asset
 # Attention configuration
 use_flex_attn = false
 attn_mask_type = "causal"
-use_flash_attn = true   # Enable for faster attention and lower memory
 
 [training]
 dataset = "sft_dataset"

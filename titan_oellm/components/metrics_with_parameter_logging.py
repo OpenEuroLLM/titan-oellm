@@ -765,7 +765,7 @@ def build_metrics_processor_with_parameter_logging(
     that adds parameter logging capabilities when using titan_oellm JobConfig.
 
     Args:
-        job_config: Job configuration (should be titan_oellm.configs.sci_job_config.JobConfig)
+        job_config: Job configuration (should be titan_oellm.configs.oellm_job_config.JobConfig)
         parallel_dims: Parallel dimensions configuration
         model_args: Unused, kept for compatibility
         tag: Optional tag for metrics

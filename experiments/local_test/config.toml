@@ -3,7 +3,7 @@ config_file = "user/joerg/configs/local_default.toml"
 dump_folder = "./torchtitan/outputs"
 description = "default job"
 print_config = false
-custom_config_module = "titan_oellm.configs.sci_job_config"
+custom_config_module = "titan_oellm.configs.oellm_job_config"
 experiment_folder = "experiments/local_test"
 
 [profiling]
@@ -38,7 +38,6 @@ qk_norm_scale_mode = "scalar"
 tie_embedding = false
 use_flex_attn = false
 attn_mask_type = "causal"
-use_flash_attn = false
 qk_norm = true
 rope_theta = 1000000
 rope_scaling_factor = 8.0

@@ -5,7 +5,7 @@
 [job]
 dump_folder = "./outputs/torchtitan"
 description = "TorchTitan training for gpt_plus model"
-custom_config_module = "titan_oellm.configs.sci_job_config"
+custom_config_module = "titan_oellm.configs.oellm_job_config"
 
 [model]
 name = "gpt_plus"
@@ -22,7 +22,6 @@ use_flex_attn = false  # Set to true for document masking
 attn_mask_type = "causal"  # Use "block_causal" for document-aware masking
 
 # Flash Attention for high-performance attention
-use_flash_attn = false  # Enable direct Flash Attention 2/3 (auto-selects FA3 on Hopper, FA2 otherwise)
 
 [metrics]
 log_freq = 500
