@@ -17,9 +17,9 @@ from titan_oellm.datasets.sci_tokenizers.sci_tokenizer import build_sci_hf_token
 
 from torchtitan.distributed.pipeline_parallel import pipeline_llm
 
-from .infra.parallelize import parallelize_olmo3_custom
 from .model.args import Olmo3CustomModelArgs
-from .model.model import Olmo3Model
+from .model.model import Olmo3Model  # must precede parallelize to register ring_flash_attn custom op
+from .infra.parallelize import parallelize_olmo3_custom
 from .model.state_dict_adapter import Olmo3StateDictAdapter
 
 __all__ = [

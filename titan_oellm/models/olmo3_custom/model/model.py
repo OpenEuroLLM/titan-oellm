@@ -15,8 +15,10 @@ from torch import nn
 from torch.nn.attention.flex_attention import and_masks, BlockMask
 
 try:
-    from ring_flash_attn import zigzag_ring_flash_attn_varlen_func as _zigzag_ring_varlen_func
+    # Import directly from submodule to avoid ring_flash_attn/__init__.py pulling
+    # in transformers adapters (incompatible with transformers>=5.x).
     from ring_flash_attn.zigzag_ring_flash_attn_varlen import (
+        zigzag_ring_flash_attn_varlen_func as _zigzag_ring_varlen_func,
         zigzag_ring_flash_attn_varlen_forward as _zigzag_ring_varlen_forward,
         zigzag_ring_flash_attn_varlen_backward as _zigzag_ring_varlen_backward,
         get_half_index as _get_half_index,
