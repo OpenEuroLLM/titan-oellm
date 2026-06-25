@@ -487,8 +487,12 @@ class Qwen3Model(nn.Module, ModelProtocol):
 
         self.tok_embeddings = nn.Embedding(model_args.vocab_size, model_args.dim)
 
+        # Buffer name "freqs_cis" is required for torchtitan's CP machinery
+        # (torchtitan/train.py:488) to slice it per CP rank along the seq dim.
+        # Without that slicing, every CP rank applies RoPE for positions
+        # 0..local_seqlen, producing wrong Q/K and NaN loss.
         self.register_buffer(
-            "rope_cache", self._precompute_rope_cache(), persistent=False
+            "freqs_cis", self._precompute_rope_cache(), persistent=False
         )
 
         self.layers = torch.nn.ModuleDict()
@@ -513,9 +517,9 @@ class Qwen3Model(nn.Module, ModelProtocol):
         ``init_weights``. We only call it in the constructor of this
         ``Transformer`` root module to avoid reinitializing tensors.
         """
-        buffer_device = buffer_device or self.rope_cache.device
+        buffer_device = buffer_device or self.freqs_cis.device
         with torch.device(buffer_device):
-            self.rope_cache = self._precompute_rope_cache()
+            self.freqs_cis = self._precompute_rope_cache()
         if self.tok_embeddings is not None:
             nn.init.normal_(self.tok_embeddings.weight)
         for layer in self.layers.values():
@@ -622,7 +626,7 @@ class Qwen3Model(nn.Module, ModelProtocol):
         h = self.tok_embeddings(tokens) if self.tok_embeddings else tokens
 
         for layer in self.layers.values():
-            h = layer(h, self.rope_cache, attention_masks, positions)
+            h = layer(h, self.freqs_cis, attention_masks, positions)
 
         # pyrefly: ignore [not-callable]
         h = self.norm(h) if self.norm else h

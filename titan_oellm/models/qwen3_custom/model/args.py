@@ -69,6 +69,16 @@ class Qwen3CustomModelArgs(BaseModelArgs):
         if hasattr(job_config.model, 'vocab_size'):
             self.vocab_size = job_config.model.vocab_size
 
+        # Wire attention dispatch from job config. Without this, the model stays
+        # on its "sdpa" default and asserts when SFT passes VarlenMetadata.
+        if hasattr(job_config.model, "attn_mask_type"):
+            self.attn_mask_type = job_config.model.attn_mask_type
+
+        if hasattr(job_config.model, "attn_type") and job_config.model.attn_type:
+            self.attn_type = job_config.model.attn_type
+        elif hasattr(job_config.model, "use_flex_attn"):
+            self.attn_type = "flex" if job_config.model.use_flex_attn else "sdpa"
+
         # Override flavor values only for fields explicitly set in config
         # (typed as X | None = None in oellm_job_config; None means "use flavor").
         cfg = job_config.model

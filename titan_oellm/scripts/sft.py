@@ -266,6 +266,13 @@ class SFTTrainer(Trainer):
             return self._forward_backward_step_liger(input_dict, labels)
 
         if not self._use_ring_varlen_cp:
+            # Standard SDPA + CP also needs global-valid normalization: any
+            # CP rank whose label slice is all -100 produces 0/0 -> NaN under
+            # the default reduction="mean" loss. Replicate the ring_varlen
+            # logic but with PyTorch's CP ctx (which the base class would
+            # normally create) so SDPA gets K/V-exchanged across CP ranks.
+            if self.parallel_dims.cp_enabled:
+                return self._forward_backward_step_sdpa_cp(input_dict, labels)
             return super().forward_backward_step(input_dict, labels)
 
         # --- ring_varlen + CP: replicate base class logic with CP ctx = None ---
@@ -316,6 +323,70 @@ class SFTTrainer(Trainer):
         ) % self.gradient_accumulation_steps
 
         return loss
+
+    def _forward_backward_step_sdpa_cp(
+        self, input_dict: dict[str, torch.Tensor], labels: torch.Tensor
+    ) -> torch.Tensor:
+        """SDPA + CP path with global-valid loss normalization.
+
+        Same as the base class forward_backward_step (PyTorch's
+        context_parallel ctx slices inputs/labels/freqs_cis and intercepts
+        SDPA for K/V exchange), but loss is computed as
+        sum(local) / sum_across_cp(global_valid) instead of local mean.
+        Without this, any CP rank whose label slice is all -100 produces
+        0/0 = NaN, which propagates through the all-reduce.
+        """
+        model_parts = self.model_parts
+        inputs, labels, extra_inputs, extra_kwargs = self.post_dataloading_process(
+            input_dict, labels
+        )
+
+        cp_pg = self.parallel_dims.get_mesh("cp").get_group()
+        valid_mask = labels != -100
+        global_valid = valid_mask.sum().to(torch.int64)
+        dist.all_reduce(global_valid, op=dist.ReduceOp.SUM, group=cp_pg)
+        global_valid = global_valid.clamp(min=1)
+
+        # Build the standard CP ctx (slices inputs/labels/freqs_cis along seq
+        # dim, installs SDPA dispatcher hook for K/V exchange).
+        cp_buffers: list[torch.Tensor] = [inputs, labels]
+        cp_seq_dims = [1, 1]
+        if hasattr(model_parts[0], "freqs_cis"):
+            for m in model_parts:
+                cp_buffers.append(m.freqs_cis)
+            cp_seq_dims += [0 for _ in model_parts]
+
+        cp_mesh = self.parallel_dims.get_mesh("cp")
+        cp_ctx = dist_utils.create_context_parallel_ctx(
+            cp_mesh=cp_mesh,
+            cp_buffers=cp_buffers,
+            cp_seq_dims=cp_seq_dims,
+            cp_no_restore_buffers={inputs, labels},
+            cp_rotate_method=self.job_config.parallelism.context_parallel_rotate_method,
+        )
+
+        with self.train_context(cp_ctx):
+            assert len(model_parts) == 1, "SDPA CP path does not support PP"
+            with self.maybe_enable_amp:
+                pred = model_parts[0](inputs, **extra_inputs, **extra_kwargs)
+                loss_sum = F.cross_entropy(
+                    pred.flatten(0, 1).float(),
+                    labels.flatten(0, 1),
+                    reduction="sum",
+                )
+                loss = loss_sum / global_valid
+            del pred
+            loss.backward()
+
+        # Each CP rank holds a partial fraction of the true loss
+        # (loss_sum is local; global_valid spans the CP group). The base
+        # class reports dist_mean(loss) over the DP*CP mesh, which would
+        # under-report by a factor of CP. SUM across CP so every rank
+        # carries the full loss; the DP*CP mean then collapses to mean_DP.
+        # Detached: we want this to affect reporting only, not backward.
+        loss_for_report = loss.detach().clone()
+        dist.all_reduce(loss_for_report, op=dist.ReduceOp.SUM, group=cp_pg)
+        return loss_for_report
 
     def _forward_backward_step_liger(
         self, input_dict: dict[str, torch.Tensor], labels: torch.Tensor
@@ -491,7 +562,17 @@ def main_sft():
     # Create config manager and explicitly pass sys.argv[1:] at runtime
     config_manager = ConfigManager()
     config = config_manager.parse_args(sys.argv[1:])
-    
+
+    # Seed numpy + python random in addition to torch/DTensor (which torchtitan's
+    # set_determinism handles). Closes the gap for any dataloader path using
+    # numpy/random.shuffle.
+    if config.debug.deterministic and config.debug.seed is not None:
+        import random
+        import numpy as np
+        random.seed(config.debug.seed)
+        np.random.seed(config.debug.seed)
+        logger.info(f"Seeded python random + numpy with {config.debug.seed}")
+
     trainer: SFTTrainer | None = None
 
     try:

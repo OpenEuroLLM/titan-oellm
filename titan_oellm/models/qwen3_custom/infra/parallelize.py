@@ -11,6 +11,9 @@ import torch
 import torch._inductor.config
 import torch.nn as nn
 
+from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
+    checkpoint_wrapper as ptd_checkpoint_wrapper,
+)
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import Replicate, Shard
 from torch.distributed.tensor.parallel import (
@@ -34,9 +37,15 @@ from torchtitan.models.llama4.infra.parallelize import (
 from torchtitan.tools.logging import logger
 
 
-# for selective op activation checkpointing
+# Selective-op activation checkpointing save list.
+# Save only ops that are *expensive to recompute*: attention kernels (softmax +
+# matmul) and the reduce-scatter result. Linears (aten.mm.default) and
+# inductor_compiled_code regions were removed: at long sequence lengths
+# (e.g. 32k), saving every mm output costs ~3 GB per layer (~108+ GB/rank for
+# 36-layer 8B with hidden_dim=18944), making selective AC use *more* memory
+# than full AC. Recomputing linears is cheap; this trims memory while keeping
+# attention saved.
 _op_sac_save_list = {
-    torch.ops.aten.mm.default,
     torch.ops.aten._scaled_dot_product_efficient_attention.default,
     torch.ops.aten._scaled_dot_product_flash_attention.default,
     torch.ops.aten._scaled_dot_product_cudnn_attention.default,
@@ -49,7 +58,6 @@ _op_sac_save_list = {
     torch.ops.aten.max.default,
     torch._higher_order_ops.flex_attention,
     torch.ops.torch_attn._varlen_attn.default,
-    torch._higher_order_ops.inductor_compiled_code,
 }
 
 
@@ -113,7 +121,26 @@ def parallelize_qwen3_custom(
             dual_pipe_v=dual_pipe_v,
         )
 
-    if job_config.activation_checkpoint.mode != "none":
+    ac_mode = job_config.activation_checkpoint.mode
+    if ac_mode == "selective" and (
+        job_config.activation_checkpoint.selective_ac_option == "ffn"
+    ):
+        # Module-level AC: wrap only the FFN per block (mirrors olmo-core's
+        # selected_modules=["blocks.*.feed_forward"]). Saves attention outputs,
+        # recomputes only the cheap FFN matmul + SiLU. Lower memory than full AC
+        # because attention activations don't need to be re-run, and lower
+        # recompute time than selective-op because we don't re-run the LM head
+        # or attention path.
+        n_wrapped = 0
+        for block in model.layers.values():
+            block.feed_forward = ptd_checkpoint_wrapper(
+                block.feed_forward, preserve_rng_state=False
+            )
+            n_wrapped += 1
+        logger.info(
+            f"Applied module-level AC to {n_wrapped} feed_forward submodules"
+        )
+    elif ac_mode != "none":
         apply_ac(
             model,
             job_config.activation_checkpoint,
