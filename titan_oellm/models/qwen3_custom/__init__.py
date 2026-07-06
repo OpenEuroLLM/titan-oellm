@@ -9,8 +9,10 @@
 # Qwen3 Custom Model for Titan-OELLM
 # Adapted from torchtitan Qwen3 implementation with titan-sci integration
 
+import torch
+
 from torchtitan.components.loss import build_cross_entropy_loss
-from torchtitan.components.optimizer import build_optimizers
+from torchtitan.components.optimizer import build_optimizers, OptimizersContainer
 from titan_oellm.components.lr_scheduler_universal import build_lr_schedulers_auto
 from titan_oellm.components.metrics_with_parameter_logging import build_metrics_processor_with_parameter_logging
 from titan_oellm.components.validator import build_sci_validator
@@ -22,6 +24,7 @@ from titan_oellm.datasets.sci_dataloader import build_sci_dataloader
 from titan_oellm.datasets.sci_tokenizers.sci_tokenizer import build_sci_hf_tokenizer
 
 from .infra.parallelize import parallelize_qwen3_custom
+from torchtitan.distributed.pipeline_parallel import pipeline_llm
 from .model.args import Qwen3CustomModelArgs
 from .model.model import Qwen3Model
 from .model.state_dict_adapter import Qwen3StateDictAdapter
@@ -230,6 +233,55 @@ def _qwen3_moe_args(
 
 
 qwen3_moe_configs = {
+    "30BA3B": Qwen3CustomModelArgs(
+        # Matches Megatron qwen3_moe_30BA3B.yaml architecture:
+        #   hidden_size=2048, ffn_hidden_size=6144, num_layers=48
+        #   num_attention_heads=32, num_query_groups=4 (GQA), kv_channels=128
+        #   num_experts=128, moe_router_topk=8, moe_ffn_hidden_size=768
+        dim=2048,
+        n_layers=48,
+        n_heads=32,
+        n_kv_heads=4,          # GQA: 4 KV heads (num_query_groups=4)
+        head_dim=128,          # kv_channels=128
+        hidden_dim=6144,       # dense FFN size (not used when moe_enabled=True)
+        vocab_size=151936,     # Qwen3 vocab; override to 50304 for GPT-NeoX data
+        norm_eps=1e-6,
+        rope_theta=1000000,
+        qk_norm=True,
+        max_seq_len=4096,
+        depth_init=True,
+        moe_enabled=True,
+        moe_inter_dim=768,     # moe_ffn_hidden_size=768 per expert
+        moe_args=_qwen3_moe_args(
+            num_experts=128,
+            top_k=8,
+        ),
+    ),
+    "235BA22B": Qwen3CustomModelArgs(
+        # Matches Megatron qwen3_moe_235BA22B.yaml architecture:
+        #   hidden_size=4096, ffn_hidden_size=12288, num_layers=94
+        #   num_attention_heads=64, num_query_groups=4 (GQA), kv_channels=128
+        #   num_experts=128, moe_router_topk=8, moe_ffn_hidden_size=1536
+        #   rope_theta=5000000 (different from 30BA3B's 1000000)
+        dim=4096,
+        n_layers=94,
+        n_heads=64,
+        n_kv_heads=4,          # GQA: 4 KV heads
+        head_dim=128,          # kv_channels=128; Q: 64×128=8192=2×hidden
+        hidden_dim=12288,      # dense FFN size (not used when moe_enabled=True)
+        vocab_size=151936,     # Qwen3 vocab; override to 50304 for GPT-NeoX data
+        norm_eps=1e-6,
+        rope_theta=5000000,
+        qk_norm=True,
+        max_seq_len=4096,
+        depth_init=True,
+        moe_enabled=True,
+        moe_inter_dim=1536,    # moe_ffn_hidden_size=1536 per expert
+        moe_args=_qwen3_moe_args(
+            num_experts=128,
+            top_k=8,
+        ),
+    ),
     "debugmodel_moe": Qwen3CustomModelArgs(
         dim=256,
         n_layers=8,
@@ -280,6 +332,66 @@ qwen3_moe_configs = {
 qwen3_custom_configs = {**qwen3_custom_configs, **qwen3_moe_configs}
 
 
+class _OptimizersContainerNoWdBiases(OptimizersContainer):
+    """OptimizersContainer that excludes 1-D params (biases, norm scales) from weight decay.
+
+    Matches Megatron-LM behavior: params with ndim < 2 (biases and norm scales)
+    are placed in a separate param group with weight_decay=0.
+    """
+
+    def __init__(self, model_parts, optimizer_cls, optimizer_kwargs):
+        wd = optimizer_kwargs.get("weight_decay", 0.0)
+        # base_kwargs go to optimizer as defaults (no weight_decay — set per group)
+        base_kwargs = {k: v for k, v in optimizer_kwargs.items() if k != "weight_decay"}
+
+        all_params = []
+        self.optimizers = []
+        self.model_parts = model_parts
+        for model in self.model_parts:
+            params = [p for p in model.parameters() if p.requires_grad]
+            decay_params = [p for p in params if p.dim() >= 2]
+            nodecay_params = [p for p in params if p.dim() < 2]
+            param_groups = [
+                {"params": decay_params, "weight_decay": wd},
+                {"params": nodecay_params, "weight_decay": 0.0},
+            ]
+            self.optimizers.append(optimizer_cls(param_groups, **base_kwargs))
+            all_params.extend(params)
+        self._validate_length(len(self.model_parts))
+        self._post_init(all_params, optimizer_kwargs)
+
+
+def build_optimizers_no_wd_biases(model_parts, optimizer_config, parallel_dims, ft_manager=None):
+    """Build optimizers with weight decay=0 for 1-D params (biases, norm scales).
+
+    Falls back to the standard build_optimizers for special cases (early_step_in_backward,
+    FaultTolerance). Matches Megatron-LM's no_wd parameter grouping.
+    """
+    if optimizer_config.early_step_in_backward or (
+        ft_manager is not None and ft_manager.enabled
+    ):
+        return build_optimizers(model_parts, optimizer_config, parallel_dims, ft_manager)
+
+    optimizer_classes = {
+        "Adam": torch.optim.Adam,
+        "AdamW": torch.optim.AdamW,
+    }
+    if optimizer_config.name not in optimizer_classes:
+        return build_optimizers(model_parts, optimizer_config, parallel_dims, ft_manager)
+
+    optimizer_cls = optimizer_classes[optimizer_config.name]
+    impl = optimizer_config.implementation
+    optimizer_kwargs = {
+        "lr": optimizer_config.lr,
+        "betas": (optimizer_config.beta1, optimizer_config.beta2),
+        "eps": optimizer_config.eps,
+        "weight_decay": optimizer_config.weight_decay,
+        "fused": impl == "fused",
+        "foreach": impl == "foreach",
+    }
+    return _OptimizersContainerNoWdBiases(model_parts, optimizer_cls, optimizer_kwargs)
+
+
 def get_train_spec() -> TrainSpec:
     """
     Create and return the training specification for qwen3_custom model.
@@ -295,8 +407,8 @@ def get_train_spec() -> TrainSpec:
         model_cls=Qwen3Model,
         model_args=qwen3_custom_configs,
         parallelize_fn=parallelize_qwen3_custom,
-        pipelining_fn=None,
-        build_optimizers_fn=build_optimizers,  # Standard optimizer (AdamW)
+        pipelining_fn=pipeline_llm,
+        build_optimizers_fn=build_optimizers_no_wd_biases,  # Exclude biases/norms from WD
         build_lr_schedulers_fn=build_lr_schedulers_auto,  # Universal LR scheduler
         build_dataloader_fn=build_sci_dataloader,  # Sci dataloader with MMap support
         build_tokenizer_fn=build_sci_hf_tokenizer,  # HF tokenizer with BOS/EOS control

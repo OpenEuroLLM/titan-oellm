@@ -1,0 +1,6 @@
+# Minimal requirements for login node cluster configuration
+# Used by submit_job.sh for loading cluster paths without full container
+# Python 3.9+ required
+
+# TOML parsing (only dependency needed by cluster_config.py)
+tomli>=2.0.0

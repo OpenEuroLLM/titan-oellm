@@ -3,14 +3,14 @@
 # JUWELS SLURM Training Script
 #
 # Usage:
-#   sbatch slurm_juwels.sh                                    # Default: juwels + norm_gpt + slimpajama + neox
-#   sbatch slurm_juwels.sh --model.flavor=1B --training.steps=20000  # Override parameters
+#   bash submit_job.sh slurm/juwels.sh                                    # Default: juwels + norm_gpt + slimpajama + neox
+#   bash submit_job.sh slurm/juwels.sh --model.flavor=1B --training.steps=20000  # Override parameters
 #
-#   DATASET=fineweb_edu sbatch slurm_juwels.sh               # Use different dataset
-#   TOKENIZER=llama3 sbatch slurm_juwels.sh                  # Use different tokenizer
-#   CONFIG=base_plus.toml sbatch slurm_juwels.sh             # Use gpt_plus model
-#   CLUSTER=jupiter sbatch slurm_juwels.sh                   # Use different cluster paths (for testing)
-#   TITAN_USER=your_username sbatch slurm_juwels.sh          # Use your user config (REQUIRED)
+#   DATASET=fineweb_edu bash submit_job.sh slurm/juwels.sh               # Use different dataset
+#   TOKENIZER=llama3 bash submit_job.sh slurm/juwels.sh                  # Use different tokenizer
+#   CONFIG=base_plus.toml bash submit_job.sh slurm/juwels.sh             # Use gpt_plus model
+#   CLUSTER=jupiter bash submit_job.sh slurm/juwels.sh                   # Use different cluster paths (for testing)
+#   TITAN_USER=your_username bash submit_job.sh slurm/juwels.sh          # Use your user config (REQUIRED)
 #
 # Environment variables:
 #   TITAN_USER - Username for user-specific configs (REQUIRED)
@@ -31,6 +31,7 @@
 #SBATCH --output=/p/scratch/.../slurm/mpi-out.%j
 #SBATCH --error=/p/scratch/.../slurm/mpi-err.%j
 
+# [Keep your NCCL exports as they are]
 export NCCL_SOCKET_TIMEOUT=60000
 export NCCL_TIMEOUT=1800
 export NCCL_IB_TIMEOUT=100
@@ -38,19 +39,16 @@ export NCCL_IB_RETRY_CNT=20
 export NCCL_ALGO=Ring
 export NCCL_SOCKET_IFNAME=ib0
 export GLOO_SOCKET_IFNAME=ib0
-export NCCL_SOCKET_FAMILY=AF_INET  
-export GLOO_SOCKET_FAMILY=AF_INET  
+export NCCL_SOCKET_FAMILY=AF_INET
+export GLOO_SOCKET_FAMILY=AF_INET
 
+
+# export TORCHDYNAMO_VERBOSE=1
+# export TORCH_LOGS="+dynamo,+inductor"   # adjust to your build's accepted env vars
 
 # Dataset and Tokenizer configuration - set via environment or use defaults
-if [ -z "$TITAN_USER" ]; then
-    echo "Error: TITAN_USER environment variable not set."
-    echo "Set it before running: export TITAN_USER=your_username"
-    echo "See user/example/ for configuration templates."
-    exit 1
-fi
-export TITAN_USER
-CLUSTER="juwels"
+export TITAN_USER="${TITAN_USER:-joerg}"     # Username for user-specific configs (user/{joerg,korbi})
+CLUSTER="juwels"            # Cluster name (juwels, jupiter, capella)
 DATASET="${DATASET:-slimpajama_627b}"    # Dataset name from cluster_paths.toml
 TOKENIZER="${TOKENIZER:-neox}"           # Tokenizer name from cluster_paths.toml
 CONFIG="${CONFIG:-base_norm.toml}"       # Base config file (base_norm.toml or base_plus.toml)

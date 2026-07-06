@@ -12,10 +12,10 @@ and available for training, regardless of which specific model is being used.
 """
 
 # Import all custom models to register their train specs
-from . import gpt_plus
 from . import qwen3_custom
+from . import gpt_plus
 
 __all__ = [
-    "gpt_plus",
     "qwen3_custom",
+    "gpt_plus",
 ]

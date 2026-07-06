@@ -34,6 +34,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import numpy
 import torch
+from torch.distributed.checkpoint.stateful import Stateful
 
 from titan_oellm.datasets.dataloader.mmap_dataset_chunked import (
     _IndexReader,
@@ -43,7 +44,7 @@ from titan_oellm.datasets.dataloader.mmap_dataset_chunked import (
 logger = logging.getLogger(__name__)
 
 
-class DeterministicPackedDataset(torch.utils.data.IterableDataset):
+class DeterministicPackedDataset(torch.utils.data.IterableDataset, Stateful):
     """
     Deterministic packed dataset that yields fixed-length token sequences
     using greedy packing.
@@ -464,6 +465,31 @@ class DeterministicPackedDataset(torch.utils.data.IterableDataset):
         return self.steps_per_epoch * self.sequences_per_rank
 
     # ── Checkpointing ────────────────────────────────────────────────────
+
+    def state_dict(self) -> Dict[str, Any]:
+        """DCP-compatible state dict.  Restoring just two integers is sufficient
+        because the chunk permutation is deterministic given (seed, epoch)."""
+        return {
+            "epoch_counter": self.epoch_counter,
+            "global_sequence_id": self.global_sequence_id,
+        }
+
+    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
+        """Restore dataset position from a DCP state dict."""
+        epoch = state_dict["epoch_counter"]
+        if epoch != self.epoch_counter:
+            self.epoch_counter = epoch
+            self._setup_global_ordering(epoch)
+        self.global_sequence_id = state_dict["global_sequence_id"]
+        self._loaded_chunks = {}
+        # Recompute current token position so __next__ reads from the right place,
+        # even when global_sequence_id is not on a step boundary.
+        local_offset = self.global_sequence_id % self.sequences_per_rank
+        step = self.global_sequence_id // self.sequences_per_rank
+        global_seq_start = (
+            step * self.global_batch_size + self.dp_rank * self.sequences_per_rank
+        )
+        self._current_token_pos = (global_seq_start + local_offset) * self.tokens_per_seq
 
     def __getstate__(self) -> Dict[str, Any]:
         """Pickle state without file handles."""
