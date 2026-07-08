@@ -9,8 +9,10 @@
 # Qwen3 Custom Model for Titan-OELLM
 # Adapted from torchtitan Qwen3 implementation with titan-sci integration
 
+import torch
+
 from torchtitan.components.loss import build_cross_entropy_loss
-from torchtitan.components.optimizer import build_optimizers
+from torchtitan.components.optimizer import build_optimizers, OptimizersContainer
 from titan_oellm.components.lr_scheduler_universal import build_lr_schedulers_auto
 from titan_oellm.components.metrics_with_parameter_logging import build_metrics_processor_with_parameter_logging
 from titan_oellm.components.validator import build_sci_validator
@@ -65,6 +67,21 @@ qwen3_custom_configs = {
         qk_norm=True,
         max_seq_len=8192,
         depth_init=True,
+    ),
+    "125M768": Qwen3CustomModelArgs(
+        dim=768,
+        n_layers=12,
+        n_heads=12,
+        n_kv_heads=6,
+        head_dim=64,
+        hidden_dim=3072,
+        norm_eps=1e-6,
+        rope_theta=500000,
+        vocab_size=151936,
+        qk_norm=True,
+        max_seq_len=4096,
+        depth_init=True,
+        enable_weight_tying=True,
     ),
     "125M768": Qwen3CustomModelArgs(
         dim=768,
@@ -230,6 +247,55 @@ def _qwen3_moe_args(
 
 
 qwen3_moe_configs = {
+    "30BA3B": Qwen3CustomModelArgs(
+        # Matches Megatron qwen3_moe_30BA3B.yaml architecture:
+        #   hidden_size=2048, ffn_hidden_size=6144, num_layers=48
+        #   num_attention_heads=32, num_query_groups=4 (GQA), kv_channels=128
+        #   num_experts=128, moe_router_topk=8, moe_ffn_hidden_size=768
+        dim=2048,
+        n_layers=48,
+        n_heads=32,
+        n_kv_heads=4,          # GQA: 4 KV heads (num_query_groups=4)
+        head_dim=128,          # kv_channels=128
+        hidden_dim=6144,       # dense FFN size (not used when moe_enabled=True)
+        vocab_size=151936,     # Qwen3 vocab; override to 50304 for GPT-NeoX data
+        norm_eps=1e-6,
+        rope_theta=1000000,
+        qk_norm=True,
+        max_seq_len=4096,
+        depth_init=True,
+        moe_enabled=True,
+        moe_inter_dim=768,     # moe_ffn_hidden_size=768 per expert
+        moe_args=_qwen3_moe_args(
+            num_experts=128,
+            top_k=8,
+        ),
+    ),
+    "235BA22B": Qwen3CustomModelArgs(
+        # Matches Megatron qwen3_moe_235BA22B.yaml architecture:
+        #   hidden_size=4096, ffn_hidden_size=12288, num_layers=94
+        #   num_attention_heads=64, num_query_groups=4 (GQA), kv_channels=128
+        #   num_experts=128, moe_router_topk=8, moe_ffn_hidden_size=1536
+        #   rope_theta=5000000 (different from 30BA3B's 1000000)
+        dim=4096,
+        n_layers=94,
+        n_heads=64,
+        n_kv_heads=4,          # GQA: 4 KV heads
+        head_dim=128,          # kv_channels=128; Q: 64×128=8192=2×hidden
+        hidden_dim=12288,      # dense FFN size (not used when moe_enabled=True)
+        vocab_size=151936,     # Qwen3 vocab; override to 50304 for GPT-NeoX data
+        norm_eps=1e-6,
+        rope_theta=5000000,
+        qk_norm=True,
+        max_seq_len=4096,
+        depth_init=True,
+        moe_enabled=True,
+        moe_inter_dim=1536,    # moe_ffn_hidden_size=1536 per expert
+        moe_args=_qwen3_moe_args(
+            num_experts=128,
+            top_k=8,
+        ),
+    ),
     "debugmodel_moe": Qwen3CustomModelArgs(
         dim=256,
         n_layers=8,

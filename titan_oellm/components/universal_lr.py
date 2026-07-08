@@ -357,7 +357,7 @@ class UniversalLR(_LRScheduler):
                 t_cooldown = t - self.warm_steps - self.main_steps
 
                 # Start from where main phase ended
-                if self._main_end_lrs[i] is None:
+                if not hasattr(self, "_main_end_lrs") or self._main_end_lrs[i] is None:
                     lr_start = base_lr  # Fallback
                 else:
                     lr_start = self._main_end_lrs[i]

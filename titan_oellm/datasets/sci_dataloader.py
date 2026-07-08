@@ -86,6 +86,7 @@ def _make_collate_fn(
     eos_id,
     seq_len: int,
     ignore_index: int,
+    mask_eot_loss: bool = False,
 ) -> partial:
     """Build the collate function for training/concatenated-validation pipelines."""
     return partial(
@@ -96,6 +97,7 @@ def _make_collate_fn(
         eos_id=eos_id,
         seq_len=seq_len,
         max_cu_seqlens_size=attn_config["max_cu_seqlens_size"],
+        mask_eot_loss=mask_eot_loss,
     )
 
 
@@ -119,6 +121,10 @@ def build_sci_dataloader(
     chunks_dir = job_config.data.chunks_dir or data_prefix
 
     ignore_index = IGNORE_INDEX
+
+    # Resolve effective eos_id: -1 → use tokenizer value; None → no EOS; >=0 → explicit
+    cfg_eos = getattr(job_config.data, "eos_id", -1)
+    eos_id: int | None = tokenizer.eos_id if cfg_eos == -1 else cfg_eos
 
     # Check for validation split mode — training excludes validation samples
     exclude_last_n = None  # For MMapDataset
@@ -188,7 +194,7 @@ def build_sci_dataloader(
             global_batch_size=resolved_gbs,
             seq_len=seq_len,
             min_sequence_length=min_doc_len,
-            eos_id=tokenizer.eos_id,
+            eos_id=eos_id,
             infinite=True,
             seed=seed,
             exclude_first_n_per_chunk=exclude_first_n_per_chunk,
@@ -203,11 +209,8 @@ def build_sci_dataloader(
     # All other datasets yield documents that need StreamingSequencer.
 
     if dataloader_type in ("DeterministicPackedDataset", "BestFitPackedDataset"):
-        eos_id = tokenizer.eos_id
         wrapped_dataset = dataset
     else:
-        eos_id = tokenizer.eos_id
-
         sequencer = StreamingSequencer(
             dataset=dataset, sequence_length=seq_len, min_sequence_length=min_doc_len, drop_last=True, eos_id=eos_id
         )
@@ -216,7 +219,8 @@ def build_sci_dataloader(
     # ── 3. Collate and wrap ──────────────────────────────────────────────
 
     attn_config = _resolve_attention_config(job_config, batch_size, seq_len, min_doc_len)
-    collate_fn = _make_collate_fn(dataloader_type, attn_config, eos_id, seq_len, ignore_index)
+    mask_eot_loss = getattr(job_config.data, "mask_eot_loss", False)
+    collate_fn = _make_collate_fn(dataloader_type, attn_config, eos_id, seq_len, ignore_index, mask_eot_loss)
 
     dl = ParallelAwareDataloader(
         dataset=wrapped_dataset,
@@ -308,7 +312,8 @@ def build_sci_validation_dataloader(
 
     # ── 2. Route to pipeline ─────────────────────────────────────────────
 
-    eos_id = tokenizer.eos_id
+    cfg_eos = getattr(job_config.data, "eos_id", -1)
+    eos_id: int | None = tokenizer.eos_id if cfg_eos == -1 else cfg_eos
     pad_id = getattr(tokenizer, "pad_id", 0)
     if pad_id is None or pad_id < 0:
         pad_id = eos_id
@@ -346,7 +351,8 @@ def build_sci_validation_dataloader(
         # Validation disables flash attention for simplicity
         attn_config["use_flash_attention"] = False
 
-        collate_fn = _make_collate_fn(dataloader_type, attn_config, eos_id, seq_len, ignore_index)
+        mask_eot_loss = getattr(job_config.data, "mask_eot_loss", False)
+        collate_fn = _make_collate_fn(dataloader_type, attn_config, eos_id, seq_len, ignore_index, mask_eot_loss)
         wrapped_dataset = sequencer
 
     # ── 3. Wrap and return ───────────────────────────────────────────────

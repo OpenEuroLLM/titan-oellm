@@ -228,12 +228,12 @@ class Attention(nn.Module):
             self.k_norm = None
 
         self.wq = nn.Linear(
-            model_args.dim, model_args.n_heads * self.head_dim, bias=False
+            model_args.dim, model_args.n_heads * self.head_dim, bias=model_args.qkv_bias
         )
-        self.wk = nn.Linear(model_args.dim, self.n_kv_heads * self.head_dim, bias=False)
-        self.wv = nn.Linear(model_args.dim, self.n_kv_heads * self.head_dim, bias=False)
+        self.wk = nn.Linear(model_args.dim, self.n_kv_heads * self.head_dim, bias=model_args.qkv_bias)
+        self.wv = nn.Linear(model_args.dim, self.n_kv_heads * self.head_dim, bias=model_args.qkv_bias)
         self.wo = nn.Linear(
-            model_args.n_heads * self.head_dim, model_args.dim, bias=False
+            model_args.n_heads * self.head_dim, model_args.dim, bias=model_args.qkv_bias,
         )
 
         match self.attn_type:
@@ -251,6 +251,8 @@ class Attention(nn.Module):
     def init_weights(self, init_std: float):
         for linear in (self.wq, self.wk, self.wv):
             nn.init.trunc_normal_(linear.weight, mean=0.0, std=0.02)
+            if linear.bias is not None:
+                nn.init.zeros_(linear.bias)
         nn.init.trunc_normal_(self.wo.weight, mean=0.0, std=init_std)
         if self.q_norm is not None:
             self.q_norm.reset_parameters()
@@ -346,6 +348,11 @@ class FeedForward(nn.Module):
     Uses separate w1 (gate) and w3 (up) projections to avoid allocating a
     single contiguous (batch, seq, 2*hidden_dim) activation tensor, which
     reduces peak memory and fragmentation pressure under torch.compile.
+    FeedForward module with SwiGLU activation.
+
+    Uses separate w1 (gate) and w3 (up) projections to avoid allocating a
+    single contiguous (batch, seq, 2*hidden_dim) activation tensor, which
+    reduces peak memory and fragmentation pressure under torch.compile.
 
     Args:
         dim (int): Input dimension.
@@ -356,6 +363,7 @@ class FeedForward(nn.Module):
         self,
         dim: int,
         hidden_dim: int,
+        bias: bool = False,
     ):
         super().__init__()
 
@@ -367,6 +375,8 @@ class FeedForward(nn.Module):
         return self.w2(F.silu(self.w1(x)) * self.w3(x))
 
     def init_weights(self, init_std: float):
+        # w1 (up/key) and w3 (gate) are input-side projections: use base std.
+        # w2 (down/output) is the output projection: use depth-scaled init_std.
         nn.init.trunc_normal_(self.w1.weight, mean=0.0, std=0.02)
         nn.init.trunc_normal_(self.w3.weight, mean=0.0, std=0.02)
         nn.init.trunc_normal_(self.w2.weight, mean=0.0, std=init_std)
@@ -408,7 +418,7 @@ class TransformerBlock(nn.Module):
             )
         else:
             self.feed_forward = FeedForward(
-                dim=model_args.dim, hidden_dim=model_args.hidden_dim
+                dim=model_args.dim, hidden_dim=model_args.hidden_dim, bias=model_args.mlp_bias
             )
         self.attention_norm = nn.RMSNorm(model_args.dim, eps=model_args.norm_eps)
         self.ffn_norm = nn.RMSNorm(model_args.dim, eps=model_args.norm_eps)
@@ -516,8 +526,21 @@ class Qwen3Model(nn.Module, ModelProtocol):
         buffer_device = buffer_device or self.rope_cache.device
         with torch.device(buffer_device):
             self.rope_cache = self._precompute_rope_cache()
+        final_out_std = 0.02
+        cutoff_factor = 3
         if self.tok_embeddings is not None:
-            nn.init.normal_(self.tok_embeddings.weight)
+            if self.model_args.enable_weight_tying:
+                # Use the same init as the output head so the shared weight
+                # starts with near-uniform logits.
+                nn.init.trunc_normal_(
+                    self.tok_embeddings.weight,
+                    mean=0.0,
+                    std=final_out_std,
+                    a=-cutoff_factor * final_out_std,
+                    b=cutoff_factor * final_out_std,
+                )
+            else:
+                nn.init.normal_(self.tok_embeddings.weight)
         for layer in self.layers.values():
             if layer is not None:
                 # pyrefly: ignore [not-callable]

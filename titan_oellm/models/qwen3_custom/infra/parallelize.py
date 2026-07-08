@@ -102,7 +102,7 @@ def parallelize_qwen3_custom(
     if parallel_dims.tp_enabled or parallel_dims.ep_enabled:
         dual_pipe_v = get_dual_pipe_v_flag(job_config, parallel_dims)
 
-        tp_mesh = parallel_dims.get_mesh("tp")
+        tp_mesh = parallel_dims.get_optional_mesh("tp")  # None when TP=1 (EP-only case)
         apply_moe_ep_tp(
             model,
             tp_mesh=tp_mesh,

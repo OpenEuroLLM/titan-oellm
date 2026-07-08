@@ -17,6 +17,7 @@ from torchtitan.config.job_config import (
     Training as BaseTraining,
 )
 from torchtitan.tools.logging import logger
+from torchtitan.config.job_config import Checkpoint as BaseCheckpoint
 
 
 @dataclass
@@ -52,6 +53,15 @@ class SciData:
     seed: int = 42
     """Random seed for data loading"""
 
+    mask_eot_loss: bool = False
+    """If True, mask EOS/EOT tokens from the loss (like Megatron's eod_mask_loss)."""
+
+    eos_id: int | None = -1
+    """EOS token ID inserted between documents during packing.
+       -1 (default): use tokenizer.eos_id (backward-compatible behaviour).
+       null / None: do NOT insert any EOS between documents (matches Megatron packing).
+       >= 0: use this specific token ID."""
+
 
 @dataclass
 class ValidationDataset:
@@ -71,7 +81,6 @@ class ValidationDataset:
 
     best_fit_buffer_size: int = 500
     """Tree size for BestFitPackedDataset packing (default: 500)"""
-
 
 
 @dataclass
@@ -209,6 +218,9 @@ class LRScheduler(BaseLRScheduler):
     # NOTE: decay_type is inherited from BaseLRScheduler (default="linear")
     # NOTE: lr_min is inherited from BaseLRScheduler (default=0.0)
 
+    # fix to none as always warm_steps / warm_ratio should be used
+    warmup_steps: int | None = None
+
     decay_ratio: float | None = None
     """
     Controls the proportion of remaining training steps (after warmup) allocated to decay/annealing.
@@ -298,6 +310,28 @@ class LRScheduler(BaseLRScheduler):
 
     cooldown_type: str = "cosine"
 
+    lr_steps: int | None = None
+    """
+    Number of steps to use as the LR scheduler's total training duration.
+    If set, overrides ``training.steps`` for the scheduler only, so the training
+    loop runs for ``training.steps`` while the LR is planned over ``lr_steps``.
+    Useful for cooldown stages that resume from a checkpoint (self.step = start_step)
+    and run total_steps - start_step iterations, but need the LR to decay fully
+    over exactly decay_steps = total_steps - start_step.
+    """
+
+
+@dataclass
+class Checkpoint(BaseCheckpoint):
+
+    extra_steps: list[int] = field(default_factory=list)
+    """Additional specific steps at which to save a checkpoint, regardless of interval."""
+
+    initial_step: int = -1
+    """Override the step counter after loading a model-only checkpoint.
+    When >= 0 and initial_load_model_only is true, the train_state step
+    will be set to this value after loading. Useful for running validation
+    at the correct step when the final checkpoint was saved model-only."""
 
 
 @dataclass
@@ -372,22 +406,20 @@ class Model(BaseModel):
     rope_original_max_position_embeddings: int = 8192
     """Original maximum position embeddings before scaling (default: 8192)"""
 
-    head_dim: int | None = None
-    """Dimension per attention head (Qwen3). None = use flavor value."""
-    hidden_dim: int | None = None
-    """FFN hidden dimension (Qwen3). None = use flavor value."""
-    norm_eps: float | None = None
-    """Layer normalization epsilon (Qwen3). None = use flavor value."""
-    depth_init: bool | None = None
-    """Use depth-dependent initialization (Qwen3). None = use flavor value."""
-    enable_weight_tying: bool | None = None
-    """Tie embedding and output head weights (Qwen3). None = use flavor value."""
-    use_complex_rope: bool | None = None
-    """Complex-mul RoPE (interleaved pairing, fewer intermediates). None = use flavor value."""
-    moe_enabled: bool | None = None
-    """Enable Mixture of Experts. None = use flavor value."""
-    moe_inter_dim: int | None = None
-    """MoE intermediate dimension. None = use flavor value."""
+    head_dim: int = 128
+    """Dimension per attention head (Qwen3)"""
+    hidden_dim: int = 3072
+    """FFN hidden dimension (Qwen3)"""
+    norm_eps: float = 1e-6
+    """Layer normalization epsilon (Qwen3)"""
+    depth_init: bool = True
+    """Use depth-dependent initialization (Qwen3)"""
+    enable_weight_tying: bool = False
+    """Tie embedding and output head weights (Qwen3)"""
+    moe_enabled: bool = False
+    """Enable Mixture of Experts (Qwen3 MoE variants)"""
+    moe_inter_dim: int = 768
+    """MoE intermediate dimension (Qwen3 MoE variants)"""
 
 
 @dataclass
@@ -529,6 +561,7 @@ class JobConfig(BaseJobConfig):
     training: Training = field(default_factory=Training)
     lr_scheduler: LRScheduler = field(default_factory=LRScheduler)
     parallelism: Parallelism = field(default_factory=Parallelism)
+    checkpoint: Checkpoint = field(default_factory=Checkpoint)  # Override to add extra_steps
     validation: Validation = field(default_factory=Validation)  # Override base Validation with custom implementation
     compile: Compile = field(default_factory=Compile)  # Override to add mode
 

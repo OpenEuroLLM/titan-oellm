@@ -386,4 +386,5 @@ def build_lr_schedulers_auto(
         )
 
     logger.info("Using Universal LR Scheduler (unified scheduler for all use cases)")
-    return build_lr_schedulers_universal(optimizers, lr_scheduler_config, training_steps)
+    effective_steps = getattr(lr_scheduler_config, 'lr_steps', None) or training_steps
+    return build_lr_schedulers_universal(optimizers, lr_scheduler_config, effective_steps)
