@@ -109,13 +109,12 @@ DATASET_CONFIGS = {
 }
 
 
-def get_tokenizer(tokenizer_name: str, cluster: str, user: str = "joerg") -> SciHFTokenizer:
+def get_tokenizer(tokenizer_name: str, cluster: str) -> SciHFTokenizer:
     """Get tokenizer from cluster_paths.toml.
 
     Args:
         tokenizer_name: Tokenizer name from cluster_paths.toml (e.g., neox, nemotron)
         cluster: Cluster name (juwels, jupiter, capella)
-        user: User directory for cluster_paths.toml (default: joerg)
 
     Returns:
         SciHFTokenizer instance
@@ -123,7 +122,6 @@ def get_tokenizer(tokenizer_name: str, cluster: str, user: str = "joerg") -> Sci
     tokenizer_path = get_tokenizer_path(
         tokenizer=tokenizer_name,
         cluster=cluster,
-        user=user
     )
 
     logger.info(f"Loading tokenizer from: {tokenizer_path}")
@@ -296,12 +294,6 @@ def main():
         help="Cluster name: juwels, jupiter, capella"
     )
     parser.add_argument(
-        "--user",
-        type=str,
-        default="joerg",
-        help="User directory for cluster_paths.toml (default: joerg)"
-    )
-    parser.add_argument(
         "--datasets",
         nargs="+",
         default=["wikitext2", "wikitext103", "lambada"],
@@ -335,7 +327,7 @@ def main():
 
     # Get tokenizer from cluster_paths.toml
     logger.info(f"Loading tokenizer '{args.tokenizer}' for cluster '{args.cluster}'")
-    tokenizer = get_tokenizer(args.tokenizer, args.cluster, args.user)
+    tokenizer = get_tokenizer(args.tokenizer, args.cluster)
 
     # Process each dataset
     all_stats = {}

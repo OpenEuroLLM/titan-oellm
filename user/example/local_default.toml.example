@@ -1,7 +1,7 @@
 # Local development configuration template
 #
 # SETUP INSTRUCTIONS:
-# 1. Copy this file to user/<your_username>/local_default.toml
+# 1. Copy this file to user/local_default.toml (the user/ folder is gitignored)
 # 2. Replace all paths with your local development paths
 # 3. Adjust training parameters for local testing
 #

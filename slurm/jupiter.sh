@@ -9,10 +9,10 @@
 #   DATASET=fineweb_edu sbatch slurm_jupiter.sh               # Use different dataset
 #   TOKENIZER=llama3 sbatch slurm_jupiter.sh                  # Use different tokenizer
 #   CONFIG=base_plus.toml sbatch slurm_jupiter.sh             # Use gpt_plus model
-#   TITAN_USER=USER sbatch slurm_jupiter.sh                  # Use different user's config
+#
+# Config is read from the local (gitignored) user/cluster_paths.toml.
 #
 # Environment variables:
-#   TITAN_USER - Username for user-specific configs (default: joerg)
 #   CLUSTER    - Cluster name from cluster_paths.toml (default: jupiter)
 #   DATASET    - Dataset name from cluster_paths.toml (default: slimpajama_627b)
 #   TOKENIZER  - Tokenizer name from cluster_paths.toml (default: neox)
@@ -87,7 +87,6 @@ NUM_GPUS_PER_NODE=4
 SLURM_CPUS_PER_TASK=18
 
 # Dataset and Tokenizer configuration - set via environment or use defaults
-export TITAN_USER="${TITAN_USER:-NAME}"     # Username for user-specific configs (user/{USER})
 CLUSTER="jupiter"            # Cluster name (juwels, jupiter, capella)
 DATASET="${DATASET:-slimpajama_627b}"    # Dataset name from cluster_paths.toml
 TOKENIZER="${TOKENIZER:-neox}"           # Tokenizer name from cluster_paths.toml
@@ -102,15 +101,14 @@ PROJECT_DIR=$(pwd)                       # Assume script is run from project roo
 # ============================================================================
 # LOAD CLUSTER CONFIGURATION
 # ============================================================================
-# Load cluster-specific cache directories and paths from user-specific
-# cluster_paths.toml via cluster_config.py
+# Load cluster-specific cache directories and paths from the local
+# user/cluster_paths.toml via cluster_config.py
 #
 # This runs inside the container where torchtitan is available
-echo "Loading cluster configuration for user '$TITAN_USER' on cluster '$CLUSTER'..."
+echo "Loading cluster configuration for cluster '$CLUSTER'..."
 
 # Load all cluster configuration as environment variables (run in container)
 eval "$(apptainer exec \
-    --env TITAN_USER=$TITAN_USER \
     --bind $PROJECT_DIR:/opt/titan-oellm \
     $PROJECT_DIR/$CONTAINER \
     python3 -c "
@@ -127,7 +125,7 @@ except Exception as e:
 # Check if configuration was loaded successfully
 if [ -z "$TRITON_CACHE_DIR" ]; then
     echo "ERROR: Failed to load cluster configuration"
-    echo "Please ensure user/$TITAN_USER/cluster_paths.toml has [cluster.$CLUSTER] section"
+    echo "Please ensure user/cluster_paths.toml has [cluster.$CLUSTER] section"
     exit 1
 fi
 
@@ -167,7 +165,6 @@ SRUN_ARGS="
 
 APPTAINER="apptainer exec \
 --writable-tmpfs \
---env TITAN_USER=$TITAN_USER \
 --env MASTER_ADDR=$MASTER_ADDR \
 --env MASTER_PORT=$MASTER_PORT \
 --env TORCH_HOME=$TORCH_HOME \
@@ -196,7 +193,6 @@ APPTAINER="apptainer exec \
 # Note: Runs in container on master node before distributing to compute nodes
 echo "Validating configuration and paths..."
 CLUSTER_ARGS=$(apptainer exec \
-    --env TITAN_USER=$TITAN_USER \
     --bind $PROJECT_DIR:/opt/titan-oellm \
     $PROJECT_DIR/$CONTAINER \
     python3 -c "

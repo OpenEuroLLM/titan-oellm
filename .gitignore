@@ -212,13 +212,11 @@ __marimo__/
 # Titan-OELLM specific
 # ==============================================================================
 
-# User-specific configurations (must be customized per user)
-/user/*/cluster_paths.toml
-/user/*/local_default.toml
-/user/*/experimente/
-/user/*/outputs/
-
-# Keep example templates
+# Private per-developer user/ folder. Everything under user/ is local-only
+# (cluster_paths.toml, configs, experiment scripts, outputs, ...); only the
+# shared example templates are tracked. Never commit user/ content on main.
+# To version your own user/ folder, fork/branch and remove these ignore lines.
+/user/*
 !/user/example/
 
 # Training outputs and experiment results

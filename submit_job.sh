@@ -24,22 +24,24 @@ Options:
   --           Separator between sbatch options and training arguments
 
 Environment:
-  TITAN_USER   Username for configs (REQUIRED)
   CLUSTER      Cluster name (default: auto-detect from hostname or 'local')
   DATASET      Dataset name (default: test_dataset)
   TOKENIZER    Tokenizer name (default: neox)
   CONFIG       Config file path for --local mode
   NPROC        Number of GPUs for local (default: 1)
 
+Config is read from the local (gitignored) user/ folder; copy the templates
+from user/example/ first (see README).
+
 Examples:
   # Submit with auto-detected cluster (hostname-based)
-  TITAN_USER=joerg bash submit_job.sh --nodes=1 --time=1:00:00 -- --model.flavor=1.8B
+  bash submit_job.sh --nodes=1 --time=1:00:00 -- --model.flavor=1.8B
 
   # Submit with explicit cluster
-  TITAN_USER=joerg CLUSTER=juwels bash submit_job.sh --nodes=4 -- --compile.mode=max-autotune
+  CLUSTER=juwels bash submit_job.sh --nodes=4 -- --compile.mode=max-autotune
 
   # Local training
-  TITAN_USER=joerg bash submit_job.sh --local --model.flavor=debugmodel
+  bash submit_job.sh --local --model.flavor=debugmodel
 EOF
 }
 
@@ -88,7 +90,6 @@ run_python() {
     if [[ "$cluster" == "capella" && "$runtime" == "singularity" ]]; then
         (cd "$SCRIPT_DIR" && $runtime exec \
             --pwd "$SCRIPT_DIR" \
-            --env TITAN_USER="$TITAN_USER" \
             "${cache_env[@]}" \
             "$container" python3 -c "
 import sys
@@ -97,7 +98,6 @@ $code")
     else
         # Use bind mounts for other clusters
         $runtime exec \
-            --env TITAN_USER="$TITAN_USER" \
             "${cache_env[@]}" \
             --bind "$SCRIPT_DIR:/opt/titan-oellm" \
             "$container" python3 -c "
@@ -144,8 +144,6 @@ for arg in "$@"; do
     esac
 done
 
-[[ -n "${TITAN_USER:-}" ]] || die "TITAN_USER not set. Run: export TITAN_USER=your_username"
-
 # ============================================================================
 # LOCAL EXECUTION MODE
 # ============================================================================
@@ -163,7 +161,7 @@ if [[ "$LOCAL_MODE" == true ]]; then
     DATASET="${DATASET:-test_dataset}"
     TOKENIZER="${TOKENIZER:-neox}"
     NPROC="${NPROC:-1}"
-    CONFIG="${CONFIG:-user/$TITAN_USER/configs/debug.toml}"
+    CONFIG="${CONFIG:-user/configs/debug.toml}"
     CONTAINER=$(find_container "$CLUSTER")
 
     # Test if container runtime works (fails on some login nodes like Capella)
@@ -175,7 +173,7 @@ On Capella, Singularity only works on compute nodes, not login nodes.
 Please use one of these alternatives:
 
 1. Submit as a SLURM job (recommended):
-   TITAN_USER=$TITAN_USER DATASET=$DATASET TOKENIZER=$TOKENIZER CONFIG=$CONFIG \\
+   DATASET=$DATASET TOKENIZER=$TOKENIZER CONFIG=$CONFIG \\
    bash submit_job.sh --nodes=1 --time=0:30:00 -- ${ARGS[@]}
 
 2. Get an interactive compute node first:
@@ -195,7 +193,7 @@ EOF
     [[ -n "${TRITON_CACHE_DIR:-}" ]] || die "Failed to load cluster config for '$CLUSTER'"
 
     # Set OUTPUT_DIR from cluster config
-    OUTPUT_DIR=$(run_python "$CONTAINER" "from titan_oellm.cluster_config import get_cluster_config; config = get_cluster_config('$CLUSTER', '$TITAN_USER'); print(config['output_dir'])")
+    OUTPUT_DIR=$(run_python "$CONTAINER" "from titan_oellm.cluster_config import get_cluster_config; config = get_cluster_config('$CLUSTER'); print(config['output_dir'])")
 
     # Get dataset/tokenizer CLI args (skip validation since paths may not be accessible from login node)
     # get_cli_args now includes --job.config_file with resolved path
@@ -244,7 +242,6 @@ EOF
         --bind "$HF_DATASETS_CACHE:$HF_DATASETS_CACHE"
         --bind "$TORCH_HOME:$TORCH_HOME"
         --bind "$HOME:$HOME"
-        --env TITAN_USER="$TITAN_USER"
         --env OUTPUT_DIR="$OUTPUT_DIR"
         --env TORCH_HOME="$TORCH_HOME"
         --env PYTHONPATH="/opt/titan-oellm/torchtitan"
@@ -349,7 +346,7 @@ cluster_config = importlib.util.module_from_spec(spec)
 sys.modules['cluster_config'] = cluster_config
 spec.loader.exec_module(cluster_config)
 
-config = cluster_config.get_cluster_config('$CLUSTER', '$TITAN_USER')
+config = cluster_config.get_cluster_config('$CLUSTER')
 print(config['output_dir'])
 ")
 [[ -n "$OUTPUT_DIR" ]] || die "Failed to get output_dir for cluster '$CLUSTER'"

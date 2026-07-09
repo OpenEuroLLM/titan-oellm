@@ -20,12 +20,15 @@ Usage:
     args = get_cli_args('slimpajama_627b', 'neox', cluster='juwels')
 """
 
-import os
 import socket
 import sys
-import tomli
 from pathlib import Path
 from typing import Optional
+
+try:
+    import tomllib as tomli
+except ModuleNotFoundError:  # Python < 3.11
+    import tomli
 
 
 def detect_cluster() -> str:
@@ -65,61 +68,40 @@ def detect_cluster() -> str:
         )
 
 
-def load_cluster_paths(user: Optional[str] = None) -> dict:
+def load_cluster_paths() -> dict:
     """
-    Load cluster_paths.toml configuration file from user-specific directory.
+    Load cluster_paths.toml configuration from the local user/ directory.
 
-    Args:
-        user: Username to load config for (requires TITAN_USER env var if not specified)
+    The repository tracks templates under user/example/; each developer copies
+    them into user/ and adapts them locally (user/ is gitignored).
 
     Returns:
         dict: Parsed TOML configuration
 
     Raises:
-        ValueError: If TITAN_USER environment variable is not set
+        FileNotFoundError: If user/cluster_paths.toml does not exist
     """
-    # Determine user from parameter or environment variable
-    if user is None:
-        user = os.environ.get('TITAN_USER')
-        if user is None:
-            raise ValueError(
-                "TITAN_USER environment variable not set.\n"
-                "Set it to your username: export TITAN_USER=your_username\n"
-                "See user/example/ for configuration templates."
-            )
-
-    # Construct path to user-specific cluster_paths.toml
     project_root = Path(__file__).parent.parent
-    config_path = project_root / "user" / user / "cluster_paths.toml"
+    config_path = project_root / "user" / "cluster_paths.toml"
 
-    # Fallback to old location with deprecation warning
     if not config_path.exists():
-        old_config_path = Path(__file__).parent / "configs" / "cluster_paths.toml"
-        if old_config_path.exists():
-            print(
-                f"Warning: Using deprecated config location: {old_config_path}\n"
-                f"Please move cluster_paths.toml to: {config_path}",
-                file=sys.stderr,
-            )
-            config_path = old_config_path
-        else:
-            raise FileNotFoundError(
-                f"Configuration file not found: {config_path}\n"
-                f"Please ensure cluster_paths.toml exists in user/{user}/ directory."
-            )
+        raise FileNotFoundError(
+            f"Configuration file not found: {config_path}\n"
+            "Create it by copying a template from user/example/, e.g.:\n"
+            "  cp user/example/cluster_paths.toml.example user/cluster_paths.toml"
+        )
 
     with open(config_path, "rb") as f:
         return tomli.load(f)
 
 
-def get_tokenizer_path(tokenizer: str, cluster: Optional[str] = None, user: Optional[str] = None) -> str:
+def get_tokenizer_path(tokenizer: str, cluster: Optional[str] = None) -> str:
     """
     Get tokenizer path for specified cluster.
 
     Args:
         tokenizer: Tokenizer name (e.g., 'neox', 'nemotron')
         cluster: Cluster name (auto-detected if None)
-        user: Username for config lookup (defaults to TITAN_USER env var, then 'joerg')
 
     Returns:
         str: Absolute path to tokenizer directory
@@ -130,7 +112,7 @@ def get_tokenizer_path(tokenizer: str, cluster: Optional[str] = None, user: Opti
     if cluster is None:
         cluster = detect_cluster()
 
-    config = load_cluster_paths(user=user)
+    config = load_cluster_paths()
 
     # Lookup tokenizer path
     tokenizer_key = f"tokenizer.{tokenizer}.{cluster}"
@@ -147,7 +129,7 @@ def get_tokenizer_path(tokenizer: str, cluster: Optional[str] = None, user: Opti
 
 
 def get_benchmark_paths(
-    tokenizer: str, cluster: Optional[str] = None, user: Optional[str] = None, validate: bool = True
+    tokenizer: str, cluster: Optional[str] = None, validate: bool = True
 ) -> dict:
     """
     Get benchmark paths for specified tokenizer and cluster.
@@ -155,7 +137,6 @@ def get_benchmark_paths(
     Args:
         tokenizer: Tokenizer name (e.g., 'neox', 'nemotron')
         cluster: Cluster name (auto-detected if None)
-        user: Username for config lookup (defaults to TITAN_USER env var, then 'joerg')
         validate: Whether to validate that benchmark files exist (default: True)
 
     Returns:
@@ -171,7 +152,7 @@ def get_benchmark_paths(
     if cluster is None:
         cluster = detect_cluster()
 
-    config = load_cluster_paths(user=user)
+    config = load_cluster_paths()
 
     # Lookup benchmark base path
     benchmark_key = f"benchmarks.{tokenizer}.{cluster}"
@@ -220,7 +201,7 @@ def get_benchmark_paths(
     return paths
 
 
-def get_paths(dataset: str, tokenizer: str, cluster: Optional[str] = None, user: Optional[str] = None) -> dict:
+def get_paths(dataset: str, tokenizer: str, cluster: Optional[str] = None) -> dict:
     """
     Get resolved paths for dataset and tokenizer on specified cluster.
 
@@ -228,7 +209,6 @@ def get_paths(dataset: str, tokenizer: str, cluster: Optional[str] = None, user:
         dataset: Dataset name (e.g., 'slimpajama_627b', 'fineweb_edu')
         tokenizer: Tokenizer name (e.g., 'neox', 'llama3')
         cluster: Cluster name (auto-detected if None)
-        user: Username for config lookup (defaults to TITAN_USER env var, then 'joerg')
 
     Returns:
         dict: Dictionary with resolved paths:
@@ -246,7 +226,7 @@ def get_paths(dataset: str, tokenizer: str, cluster: Optional[str] = None, user:
     if cluster is None:
         cluster = detect_cluster()
 
-    config = load_cluster_paths(user=user)
+    config = load_cluster_paths()
 
     # Lookup tokenizer path
     tokenizer_key = f"tokenizer.{tokenizer}.{cluster}"
@@ -330,7 +310,6 @@ def get_cli_args(
     config_file: str = "qwen3_custom.toml",
     config_base_path: str = "/opt/titan-oellm/titan_oellm/configs",
     validate: bool = True,
-    user: Optional[str] = None,
     project_root: str = "/opt/titan-oellm",
 ) -> str:
     """
@@ -345,7 +324,6 @@ def get_cli_args(
         config_file: Config filename (default: 'qwen3_custom.toml')
         config_base_path: Deprecated. Use project_root instead.
         validate: Whether to validate paths before returning (default: True)
-        user: Username for config lookup (defaults to TITAN_USER env var, then 'joerg')
 
     Returns:
         str: Space-separated CLI arguments for training script, including --job.config_file
@@ -366,7 +344,7 @@ def get_cli_args(
             cluster = detect_cluster()
 
         valid, messages = validate_paths(dataset, tokenizer, cluster, config_file,
-                                         project_root=project_root, user=user)
+                                         project_root=project_root)
 
         # Print all messages (errors and warnings)
         for msg in messages:
@@ -375,7 +353,7 @@ def get_cli_args(
         if not valid:
             raise RuntimeError("Path validation failed. See errors above.")
 
-    paths = get_paths(dataset, tokenizer, cluster, user=user)
+    paths = get_paths(dataset, tokenizer, cluster)
 
     config_dataloader = None
     try:
@@ -388,7 +366,7 @@ def get_cli_args(
         config_dataloader = None
 
     # Get benchmark paths (validation handled by get_benchmark_paths)
-    benchmark_paths = get_benchmark_paths(tokenizer, cluster, user=user, validate=validate)
+    benchmark_paths = get_benchmark_paths(tokenizer, cluster, validate=validate)
 
     return _format_cli_args(paths, benchmark_paths, config_path, config_dataloader)
 
@@ -428,7 +406,6 @@ def validate_paths(
     cluster: str,
     config_file: str,
     config_base_path: str = "/opt/titan-oellm/titan_oellm/configs",
-    user: Optional[str] = None,
     project_root: str = "/opt/titan-oellm",
 ) -> tuple[bool, list[str]]:
     """
@@ -440,7 +417,6 @@ def validate_paths(
         cluster: Cluster name (e.g., 'juwels')
         config_file: Config filename (e.g., 'base_norm.toml')
         config_base_path: Deprecated. Use project_root instead.
-        user: Username for config lookup (defaults to TITAN_USER env var, then 'joerg')
         project_root: Project root directory (default: '/opt/titan-oellm')
 
     Returns:
@@ -473,7 +449,7 @@ def validate_paths(
 
     # Get paths from cluster_config
     try:
-        paths = get_paths(dataset, tokenizer, cluster, user=user)
+        paths = get_paths(dataset, tokenizer, cluster)
     except ValueError as e:
         messages.append(f"Error: Failed to resolve paths: {e}")
         return False, messages
@@ -603,12 +579,9 @@ def _extract_names(prefix: str, config: dict) -> list[str]:
     return sorted(names)
 
 
-def list_available(user: Optional[str] = None) -> None:
+def list_available() -> None:
     """
     Print all available configurations (clusters, datasets, tokenizers).
-
-    Args:
-        user: Username for config lookup (defaults to TITAN_USER env var, then 'joerg')
 
     Example output:
         Available configurations:
@@ -616,7 +589,7 @@ def list_available(user: Optional[str] = None) -> None:
           Dataset-tokenizer pairs: nemotron_cc.nemotron, slimpajama_627b.neox
           Tokenizers: neox, nemotron
     """
-    config = load_cluster_paths(user=user)
+    config = load_cluster_paths()
 
     datasets = _extract_names("dataset", config)
     tokenizers = _extract_names("tokenizer", config)
@@ -637,13 +610,12 @@ def list_available(user: Optional[str] = None) -> None:
     print(f"  Tokenizers: {', '.join(tokenizers)}")
 
 
-def get_cluster_config(cluster: Optional[str] = None, user: Optional[str] = None) -> dict:
+def get_cluster_config(cluster: Optional[str] = None) -> dict:
     """
     Get cluster-specific configuration (paths, cache directories, container name).
 
     Args:
         cluster: Cluster name (auto-detected if None)
-        user: Username for config lookup (defaults to TITAN_USER env var, then 'joerg')
 
     Returns:
         dict: Dictionary with cluster configuration:
@@ -668,7 +640,7 @@ def get_cluster_config(cluster: Optional[str] = None, user: Optional[str] = None
     if cluster is None:
         cluster = detect_cluster()
 
-    config = load_cluster_paths(user=user)
+    config = load_cluster_paths()
 
     # Lookup cluster configuration
     cluster_key = f"cluster.{cluster}"
@@ -704,13 +676,12 @@ def get_cluster_config(cluster: Optional[str] = None, user: Optional[str] = None
     return result
 
 
-def get_env_exports(cluster: Optional[str] = None, user: Optional[str] = None) -> str:
+def get_env_exports(cluster: Optional[str] = None) -> str:
     """
     Generate shell export statements for cluster-specific cache directories.
 
     Args:
         cluster: Cluster name (auto-detected if None)
-        user: Username for config lookup (defaults to TITAN_USER env var, then 'joerg')
 
     Returns:
         str: Shell export statements for cache environment variables
@@ -724,7 +695,7 @@ def get_env_exports(cluster: Optional[str] = None, user: Optional[str] = None) -
         export HF_DATASETS_CACHE="/p/project1/transfernetx/franke5/data/cache/"
         ...
     """
-    config = get_cluster_config(cluster, user)
+    config = get_cluster_config(cluster)
 
     exports = []
     # Triton cache for kernel compilation

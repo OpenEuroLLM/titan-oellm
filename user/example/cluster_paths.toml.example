@@ -1,7 +1,7 @@
 # Cluster-specific path mappings for datasets, tokenizers, and base configurations
 #
 # SETUP INSTRUCTIONS:
-# 1. Copy this file to user/<your_username>/cluster_paths.toml
+# 1. Copy this file to user/cluster_paths.toml (the user/ folder is gitignored)
 # 2. Replace all <YOUR_*> placeholders with your actual paths
 # 3. Add/remove clusters and datasets as needed for your setup
 #
