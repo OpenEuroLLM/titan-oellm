@@ -107,10 +107,24 @@ class Qwen3CustomModelArgs(BaseModelArgs):
             logger.warning(
                 f"Sequence length {seq_len} exceeds original maximum {self.max_seq_len}."
             )
+        self.max_seq_len = seq_len
+
+        # Update vocab_size if specified in config
+        if hasattr(job_config.model, 'vocab_size'):
+            self.vocab_size = job_config.model.vocab_size
 
         # Override flavor values only for fields explicitly set in config
         # (typed as X | None = None in oellm_job_config; None means "use flavor").
         cfg = job_config.model
+        for field in (
+            'qk_norm', 'rope_theta', 'head_dim', 'hidden_dim', 'norm_eps',
+            'depth_init', 'enable_weight_tying', 'use_complex_rope',
+            'moe_enabled', 'moe_inter_dim',
+        ):
+            if hasattr(cfg, field):
+                val = getattr(cfg, field)
+                if val is not None:
+                    setattr(self, field, val)
         for field in (
             'qk_norm', 'rope_theta', 'head_dim', 'hidden_dim', 'norm_eps',
             'depth_init', 'enable_weight_tying', 'use_complex_rope',

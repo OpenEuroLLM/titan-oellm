@@ -348,6 +348,11 @@ class FeedForward(nn.Module):
     Uses separate w1 (gate) and w3 (up) projections to avoid allocating a
     single contiguous (batch, seq, 2*hidden_dim) activation tensor, which
     reduces peak memory and fragmentation pressure under torch.compile.
+    FeedForward module with SwiGLU activation.
+
+    Uses separate w1 (gate) and w3 (up) projections to avoid allocating a
+    single contiguous (batch, seq, 2*hidden_dim) activation tensor, which
+    reduces peak memory and fragmentation pressure under torch.compile.
 
     Args:
         dim (int): Input dimension.
@@ -362,10 +367,9 @@ class FeedForward(nn.Module):
     ):
         super().__init__()
 
-        # Hidden dimension is directly added from the model argsS
-        self.w1 = nn.Linear(dim, hidden_dim, bias=bias)
-        self.w2 = nn.Linear(hidden_dim, dim, bias=bias)
-        self.w3 = nn.Linear(dim, hidden_dim, bias=bias)
+        self.w1 = nn.Linear(dim, hidden_dim, bias=False)  # gate projection
+        self.w3 = nn.Linear(dim, hidden_dim, bias=False)  # up projection
+        self.w2 = nn.Linear(hidden_dim, dim, bias=False)   # down projection
 
     def forward(self, x):
         return self.w2(F.silu(self.w1(x)) * self.w3(x))
@@ -374,11 +378,8 @@ class FeedForward(nn.Module):
         # w1 (up/key) and w3 (gate) are input-side projections: use base std.
         # w2 (down/output) is the output projection: use depth-scaled init_std.
         nn.init.trunc_normal_(self.w1.weight, mean=0.0, std=0.02)
-        nn.init.trunc_normal_(self.w2.weight, mean=0.0, std=init_std)
         nn.init.trunc_normal_(self.w3.weight, mean=0.0, std=0.02)
-        for linear in (self.w1, self.w2, self.w3):
-            if linear.bias is not None:
-                nn.init.zeros_(linear.bias)
+        nn.init.trunc_normal_(self.w2.weight, mean=0.0, std=init_std)
 
 
 class TransformerBlock(nn.Module):

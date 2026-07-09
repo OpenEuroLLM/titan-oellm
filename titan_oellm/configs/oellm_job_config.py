@@ -406,46 +406,20 @@ class Model(BaseModel):
     rope_original_max_position_embeddings: int = 8192
     """Original maximum position embeddings before scaling (default: 8192)"""
 
-    head_dim: int | None = None
-    """Dimension per attention head (Qwen3). None = use flavor value."""
-    hidden_dim: int | None = None
-    """FFN hidden dimension (Qwen3). None = use flavor value."""
-    norm_eps: float | None = None
-    """Layer normalization epsilon (Qwen3). None = use flavor value."""
-    depth_init: bool | None = None
-    """Use depth-dependent initialization (Qwen3). None = use flavor value."""
-    enable_weight_tying: bool | None = None
-    """Tie embedding and output head weights (Qwen3). None = use flavor value."""
-    use_complex_rope: bool | None = None
-    """Complex-mul RoPE (interleaved pairing, fewer intermediates). None = use flavor value."""
-    moe_enabled: bool | None = None
-    """Enable Mixture of Experts. None = use flavor value."""
-    moe_inter_dim: int | None = None
-    """MoE intermediate dimension. None = use flavor value."""
-
-    # can be used to override 
-    dim: int | None = None
-    n_layers: int | None = None
-    n_heads: int | None = None
-    n_kv_heads: int | None = None
-    vocab_size: int | None = None
-    head_dim: int | None = None
-    hidden_dim: int | None = None
-    max_seq_len: int | None = None
-
-    moe_num_experts: int = 32
-    moe_top_k: int = 8
-    moe_score_func: str = "softmax"
-    moe_route_norm: bool = True
-    moe_route_scale: float = 1.0
-    moe_score_before_experts: bool = False
-    moe_num_shared_experts: int = 0
-
-    qkv_bias: bool = False
-    mlp_bias: bool = False
-
-    def __post_init__(self):
-        assert self.warmup_steps is None, "Use warm_steps / warm_ratio!!!"
+    head_dim: int = 128
+    """Dimension per attention head (Qwen3)"""
+    hidden_dim: int = 3072
+    """FFN hidden dimension (Qwen3)"""
+    norm_eps: float = 1e-6
+    """Layer normalization epsilon (Qwen3)"""
+    depth_init: bool = True
+    """Use depth-dependent initialization (Qwen3)"""
+    enable_weight_tying: bool = False
+    """Tie embedding and output head weights (Qwen3)"""
+    moe_enabled: bool = False
+    """Enable Mixture of Experts (Qwen3 MoE variants)"""
+    moe_inter_dim: int = 768
+    """MoE intermediate dimension (Qwen3 MoE variants)"""
 
 
 @dataclass

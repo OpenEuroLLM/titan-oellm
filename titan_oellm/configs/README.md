@@ -1,5 +1,12 @@
 # Titan-Sci Configuration System
 
+> **Deprecated location.** `cluster_paths.toml` no longer lives in this directory.
+> Cluster paths are now read from a single, local (gitignored) `user/cluster_paths.toml`
+> at the repo root — copy `user/example/cluster_paths.toml.example` to get started.
+> The `TITAN_USER` env var and per-user `user/<name>/` folders have been removed.
+> See the repository `README.md` ("User Configuration") for the current workflow.
+> The rest of this document is kept for historical reference.
+
 This directory contains the unified configuration system for Titan-Sci training across multiple HPC clusters.
 
 ## Overview

@@ -1,9 +1,9 @@
 # Local development / debug configuration template
 #
 # SETUP INSTRUCTIONS:
-# 1. Copy to user/<your_username>/configs/debug.toml
+# 1. Copy to user/configs/debug.toml (the user/ folder is gitignored)
 # 2. Update paths for your environment
-# 3. Run: TITAN_USER=<your_username> CONFIG=user/<your_username>/configs/debug.toml bash submit_job.sh --local
+# 3. Run: CONFIG=user/configs/debug.toml bash submit_job.sh --local
 #
 # This config is for local testing, debugging, and interactive node development.
 # Use cluster SLURM scripts with different configs for production training.

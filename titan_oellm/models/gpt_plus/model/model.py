@@ -14,6 +14,19 @@ from torch.nn.attention import sdpa_kernel, SDPBackend
 
 from torchtitan.protocols.model import ModelProtocol, AttentionMasksType
 from torchtitan.protocols.train_spec import BaseTokenizer
+import importlib
+
+try:
+    flex_attention = importlib.import_module("torch.nn.attention.flex_attention")
+    if not hasattr(flex_attention, "AuxOutput"):
+        class AuxOutput:
+            pass
+
+        flex_attention.AuxOutput = AuxOutput
+except ImportError:
+    flex_attention = None
+    AuxOutput = None
+
 from torchtitan.models.attention import (
     FlexAttentionWrapper,
     ScaledDotProductAttentionWrapper,
@@ -22,8 +35,6 @@ from torchtitan.models.attention import (
     create_attention_mask,
 )
 from torch.nn.attention.flex_attention import and_masks, BlockMask
-
-from titan_oellm.components.flash_attention import FlashAttentionWrapper
 
 from .args import RoPEScalingArgs, TransformerModelArgs
 
@@ -185,12 +196,11 @@ class QKNormPlus(nn.Module):
         self.eps = model_args.norm_eps
 
         gamma_shape = (self.n_heads, self.head_dim)
-        self.gamma_q = nn.Parameter(torch.empty(gamma_shape))
-        self.gamma_k = nn.Parameter(torch.empty(gamma_shape))
+        self.gamma_q = nn.Parameter(torch.empty(gamma_shape, dtype=torch.float32))
+        self.gamma_k = nn.Parameter(torch.empty(gamma_shape, dtype=torch.float32))
 
-        self.scale_alpha = nn.Parameter(torch.empty(self.n_heads))
-        self.scale_beta = nn.Parameter(torch.empty(self.n_heads))
-
+        self.scale_alpha = nn.Parameter(torch.empty(self.n_heads, dtype=torch.float32))
+        self.scale_beta = nn.Parameter(torch.empty(self.n_heads, dtype=torch.float32))
 
     def init_weights(self):
 
@@ -254,9 +264,145 @@ class QKNormPlus(nn.Module):
         # Cast back to input dtype for AMP compatibility
         return xq_scaled.to(input_dtype), xk_norm.to(input_dtype)
 
-        
 
+class AttentionGate(nn.Module):
+    """
+    Attention Gating module (Gated Attention for LLMs, NeurIPS 2025 Best Paper).
 
+    Applies a learnable gate after SDPA to modulate attention output per head.
+    The gate can be:
+    - scalar: Single learnable scalar per head
+    - elementwise_dense: Dense projection per head (head_dim -> head_dim)
+    - elementwise_lowrank: Low-rank projection per head (A @ B where A: head_dim -> r, B: r -> head_dim)
+
+    Gate input can be:
+    - x: Original input to attention block
+    - xv: Value vector after projection
+
+    Activation can be:
+    - sigmoid: Standard sigmoid
+    - tanh_sq: Tanh squared (tanh(x)^2)
+
+    All learnable weights are zero-initialized for residual-friendly behavior.
+
+    Args:
+        model_args: Model configuration with gate settings
+    """
+
+    def __init__(self, model_args: TransformerModelArgs):
+        super().__init__()
+        self.gate_type = model_args.attn_gate_type
+        self.gate_input = model_args.attn_gate_input
+        self.activation = model_args.attn_gate_activation
+        self.n_heads = model_args.n_heads
+        self.head_dim = model_args.dim // model_args.n_heads
+        self.lowrank_dim = model_args.attn_gate_lowrank_dim
+        self.use_bias = model_args.attn_gate_bias
+
+        # Input dimension depends on gate_input type
+        # For 'x': we use model dim and project to per-head gates
+        # For 'xv': we use the value tensor directly (n_heads, head_dim)
+        input_dim = model_args.dim
+
+        if self.gate_type == "scalar":
+            # One scalar gate per head, computed from input
+            self.gate_proj = nn.Linear(input_dim, self.n_heads, bias=self.use_bias)
+        elif self.gate_type == "elementwise_dense":
+            # Dense projection: input_dim -> n_heads * head_dim
+            self.gate_proj = nn.Linear(input_dim, self.n_heads * self.head_dim, bias=self.use_bias)
+        elif self.gate_type == "elementwise_lowrank":
+            # Low-rank: input_dim -> lowrank_dim -> n_heads * head_dim
+            self.gate_A = nn.Linear(input_dim, self.lowrank_dim, bias=False)
+            self.gate_B = nn.Linear(self.lowrank_dim, self.n_heads * self.head_dim, bias=self.use_bias)
+        elif self.gate_type != "none":
+            raise ValueError(f"Unknown attention gate type: {self.gate_type}")
+
+        # Store last gate values for logging (per-head mean)
+        self.last_gate_values: torch.Tensor | None = None
+
+    def init_weights(self, init_std: float = 0.01):
+        """Initialize gate weights with small std for stable training."""
+        if self.gate_type == "scalar":
+            nn.init.trunc_normal_(self.gate_proj.weight, mean=0.0, std=init_std)
+            if self.use_bias:
+                nn.init.zeros_(self.gate_proj.bias)
+        elif self.gate_type == "elementwise_dense":
+            nn.init.trunc_normal_(self.gate_proj.weight, mean=0.0, std=init_std)
+            if self.use_bias:
+                nn.init.zeros_(self.gate_proj.bias)
+        elif self.gate_type == "elementwise_lowrank":
+            nn.init.trunc_normal_(self.gate_A.weight, mean=0.0, std=init_std)
+            nn.init.trunc_normal_(self.gate_B.weight, mean=0.0, std=init_std)
+            if self.use_bias:
+                nn.init.zeros_(self.gate_B.bias)
+
+    def _apply_activation(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply the configured activation function."""
+        if self.activation == "sigmoid":
+            return torch.sigmoid(x)
+        elif self.activation == "tanh_sq":
+            return torch.tanh(x) ** 2
+        else:
+            raise ValueError(f"Unknown activation: {self.activation}")
+
+    def forward(
+        self,
+        output: torch.Tensor,  # (bs, n_heads, seqlen, head_dim)
+        x: torch.Tensor,       # (bs, seqlen, dim) - original input
+        xv: torch.Tensor,      # (bs, n_heads, seqlen, head_dim) - value tensor
+    ) -> torch.Tensor:
+        """
+        Apply gating to attention output.
+
+        Args:
+            output: Attention output (bs, n_heads, seqlen, head_dim)
+            x: Original input to attention (bs, seqlen, dim)
+            xv: Value tensor after projection (bs, n_heads, seqlen, head_dim)
+
+        Returns:
+            Gated output (bs, n_heads, seqlen, head_dim)
+        """
+        if self.gate_type == "none":
+            return output
+
+        bs, n_heads, seqlen, head_dim = output.shape
+
+        # Select gate input
+        if self.gate_input == "x":
+            gate_input = x  # (bs, seqlen, dim)
+        else:  # "xv"
+            # Reshape xv from (bs, n_heads, seqlen, head_dim) to (bs, seqlen, dim)
+            gate_input = xv.transpose(1, 2).reshape(bs, seqlen, -1)
+
+        # Compute gate
+        if self.gate_type == "scalar":
+            # (bs, seqlen, n_heads) -> (bs, n_heads, seqlen, 1)
+            gate = self.gate_proj(gate_input)  # (bs, seqlen, n_heads)
+            gate = gate.transpose(1, 2).unsqueeze(-1)  # (bs, n_heads, seqlen, 1)
+            gate = self._apply_activation(gate)
+        elif self.gate_type == "elementwise_dense":
+            # (bs, seqlen, dim) -> (bs, seqlen, n_heads * head_dim)
+            gate = self.gate_proj(gate_input)
+            # Reshape to (bs, seqlen, n_heads, head_dim) -> (bs, n_heads, seqlen, head_dim)
+            gate = gate.view(bs, seqlen, n_heads, head_dim).transpose(1, 2)
+            gate = self._apply_activation(gate)
+        elif self.gate_type == "elementwise_lowrank":
+            # Low-rank: A @ B
+            gate = self.gate_A(gate_input)  # (bs, seqlen, lowrank_dim)
+            gate = self.gate_B(gate)  # (bs, seqlen, n_heads * head_dim)
+            gate = gate.view(bs, seqlen, n_heads, head_dim).transpose(1, 2)
+            gate = self._apply_activation(gate)
+
+        # Store per-head mean gate values for logging (detached, on CPU)
+        # gate shape: (bs, n_heads, seqlen, 1) or (bs, n_heads, seqlen, head_dim)
+        with torch.no_grad():
+            # Mean over batch, seqlen, and head_dim -> (n_heads,)
+            if gate.dim() == 4:
+                self.last_gate_values = gate.mean(dim=(0, 2, 3)).detach().clone()
+            else:
+                self.last_gate_values = gate.mean(dim=(0, 2)).detach().clone()
+
+        return output * gate
 
 
 
@@ -312,15 +458,17 @@ class Attention(nn.Module):
         else:
             raise UserWarning(f"Unknown QK norm type {model_args.qk_norm_type}")
 
-        # Attention backend selection: FlashAttention > FlexAttention > SDPA
-        self.use_flash_attn = model_args.use_flash_attn
+        # Attention backend selection: FlexAttention > SDPA
         self.use_flex_attn = model_args.use_flex_attn
-        if self.use_flash_attn:
-            self.inner_attention = FlashAttentionWrapper()
-        elif self.use_flex_attn:
+        if self.use_flex_attn:
             self.inner_attention = FlexAttentionWrapper()
         else:
             self.inner_attention = ScaledDotProductAttentionWrapper()
+
+        # Attention Gating (Gated Attention for LLMs, NeurIPS 2025)
+        self.attn_gate_type = model_args.attn_gate_type
+        if self.attn_gate_type != "none":
+            self.attn_gate = AttentionGate(model_args)
 
     def init_weights(self, init_std: float):
         for linear in (self.wq, self.wk, self.wv):
@@ -332,6 +480,10 @@ class Attention(nn.Module):
         elif self.qk_norm_type == "RMSNorm":
             for norm in (self.q_norm, self.k_norm):
                 norm.reset_parameters()
+
+        # Initialize attention gate with small std (0.01)
+        if self.attn_gate_type != "none":
+            self.attn_gate.init_weights(init_std=0.01)
 
     def forward(
         self,
@@ -382,24 +534,22 @@ class Attention(nn.Module):
         xk = keys.transpose(1, 2)  # (bs, n_local_heads, seqlen, head_dim)
         xv = values.transpose(1, 2)  # (bs, n_local_heads, seqlen, head_dim)
 
-        if self.use_flash_attn:
-            # Flash Attention with optional document masking via cu_seqlens
-            output = self.inner_attention(
-                xq, xk, xv,
-                cu_seqlens=cu_seqlens,
-                max_seqlen=max_seqlen,
-                causal=True,
-            )
-        elif self.use_flex_attn:
+        if self.use_flex_attn:
             assert isinstance(attention_masks, BlockMask), attention_masks
             output = self.inner_attention(xq, xk, xv, block_mask=attention_masks)
         else:
             assert attention_masks is None
             output = self.inner_attention(xq, xk, xv)
 
+        # Apply attention gating (Gated Attention for LLMs, NeurIPS 2025)
+        # output shape: (bs, n_local_heads, seqlen, head_dim)
+        if self.attn_gate_type != "none":
+            output = self.attn_gate(output, x, xv)
+
         output = output.transpose(
             1, 2
         ).contiguous()  # (bs, seqlen, n_local_heads, head_dim)
+        
         output = output.view(bs, seqlen, -1)
         return self.wo(output)
 
@@ -576,6 +726,12 @@ class TransformerBlock(nn.Module):
             self.weight_init_std = 0.02 / (2 * (layer_id + 1)) ** 0.5
         else:
             self.weight_init_std = 0.02 / (2 * model_args.n_layers) ** 0.5
+        
+        # Storage for layer output logging (only used during validation)
+        self.last_attn_output_norm = None
+        self.last_attn_output_cos_sim = None
+        self.last_ffn_output_norm = None
+        self.last_ffn_output_cos_sim = None
 
     def forward(
         self,
@@ -599,8 +755,33 @@ class TransformerBlock(nn.Module):
             torch.Tensor: Output tensor after applying attention and feedforward layers.
 
         """
-        h = x + self.attention(self.attn_norm(x), freqs_cis, attention_masks, cu_seqlens, max_seqlen)
-        out = h + self.feed_forward(self.ffn_norm(h))
+        attn_out = self.attention(self.attn_norm(x), freqs_cis, attention_masks, cu_seqlens, max_seqlen)
+        
+        # Log attention output statistics before residual addition (only during validation)
+        if not self.training:
+            with torch.no_grad():
+                # Mean norm of attention output
+                self.last_attn_output_norm = torch.norm(attn_out, p=2, dim=-1).mean().item()
+                # Mean cosine similarity between attn_out and x
+                attn_norm = F.normalize(attn_out.float(), p=2, dim=-1)
+                x_norm = F.normalize(x.float(), p=2, dim=-1)
+                self.last_attn_output_cos_sim = (attn_norm * x_norm).sum(dim=-1).mean().item()
+        
+        h = x + attn_out
+        
+        ffn_out = self.feed_forward(self.ffn_norm(h))
+        
+        # Log FFN output statistics before residual addition (only during validation)
+        if not self.training:
+            with torch.no_grad():
+                # Mean norm of FFN output
+                self.last_ffn_output_norm = torch.norm(ffn_out, p=2, dim=-1).mean().item()
+                # Mean cosine similarity between ffn_out and h
+                ffn_norm = F.normalize(ffn_out.float(), p=2, dim=-1)
+                h_norm = F.normalize(h.float(), p=2, dim=-1)
+                self.last_ffn_output_cos_sim = (ffn_norm * h_norm).sum(dim=-1).mean().item()
+        
+        out = h + ffn_out
         return out
 
     def init_weights(self):

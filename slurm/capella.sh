@@ -9,10 +9,10 @@
 #   DATASET=fineweb_edu bash submit_job.sh slurm/capella.sh               # Use different dataset
 #   TOKENIZER=llama3 bash submit_job.sh slurm/capella.sh                  # Use different tokenizer
 #   CONFIG=base_plus.toml bash submit_job.sh slurm/capella.sh             # Use gpt_plus model
-#   TITAN_USER=korbi bash submit_job.sh slurm/capella.sh                  # Use different user's config (default: joerg)
+#
+# Config is read from the local (gitignored) user/cluster_paths.toml.
 #
 # Environment variables:
-#   TITAN_USER - Username for user-specific configs (default: joerg)
 #   CLUSTER    - Cluster name from cluster_paths.toml (default: capella)
 #   DATASET    - Dataset name from cluster_paths.toml (default: slimpajama_627b)
 #   TOKENIZER  - Tokenizer name from cluster_paths.toml (default: neox)
@@ -73,7 +73,6 @@ echo "INFO: SLURM_PROCID  $SLURM_PROCID"
 
 
 # Dataset and Tokenizer configuration - set via environment or use defaults
-export TITAN_USER="${TITAN_USER:-joerg}"     # Username for user-specific configs (user/{joerg,korbi})
 CLUSTER="${CLUSTER:-capella}"            # Cluster name (juwels, jupiter, capella)
 DATASET="${DATASET:-slimpajama_627b}"    # Dataset name from cluster_paths.toml
 TOKENIZER="${TOKENIZER:-neox}"           # Tokenizer name from cluster_paths.toml
@@ -86,15 +85,14 @@ CONTAINER="titan_capella_0.2.1.sif"      # Container filename
 # ============================================================================
 # LOAD CLUSTER CONFIGURATION (using venv on login node)
 # ============================================================================
-# Load cluster-specific cache directories and paths from user-specific
-# cluster_paths.toml via cluster_config.py
+# Load cluster-specific cache directories and paths from the local
+# user/cluster_paths.toml via cluster_config.py
 # This now runs in the venv on the login node
 
-echo "Loading cluster configuration for user '$TITAN_USER' on cluster '$CLUSTER'..."
+echo "Loading cluster configuration for cluster '$CLUSTER'..."
 
 # Load cluster configuration using container with writable cache paths
 eval "$(singularity exec \
-    --env TITAN_USER=$TITAN_USER \
     --env TORCHINDUCTOR_CACHE_DIR=/tmp/torch_cache \
     --env TORCH_HOME=/tmp/torch_home \
     --bind $PROJECT_DIR:/opt/titan-oellm \
@@ -114,13 +112,12 @@ except Exception as e:
 # Check if configuration was loaded successfully
 if [ -z "$TRITON_CACHE_DIR" ]; then
     echo "ERROR: Failed to load cluster configuration"
-    echo "Please ensure user/$TITAN_USER/cluster_paths.toml has [cluster.$CLUSTER] section"
+    echo "Please ensure user/cluster_paths.toml has [cluster.$CLUSTER] section"
     exit 1
 fi
 
 # Get OUTPUT_DIR from cluster config
 OUTPUT_DIR=$(singularity exec \
-    --env TITAN_USER=$TITAN_USER \
     --env TORCHINDUCTOR_CACHE_DIR=/tmp/torch_cache \
     --env TORCH_HOME=/tmp/torch_home \
     --bind $PROJECT_DIR:/opt/titan-oellm \
@@ -141,7 +138,7 @@ export OUTPUT_DIR
 # Verify OUTPUT_DIR was set correctly
 if [ -z "$OUTPUT_DIR" ]; then
     echo "ERROR: OUTPUT_DIR is empty. Failed to load from cluster configuration."
-    echo "Please check user/$TITAN_USER/cluster_paths.toml has [cluster.$CLUSTER] with output_dir set."
+    echo "Please check user/cluster_paths.toml has [cluster.$CLUSTER] with output_dir set."
     exit 1
 fi
 
@@ -193,7 +190,6 @@ echo "  HF_DATASETS_CACHE=$HF_DATASETS_CACHE"
 APPTAINER="singularity exec --nv \
 --writable-tmpfs \
     --pwd /opt/titan-oellm \
-    --env TITAN_USER=$TITAN_USER \
     --env MASTER_ADDR=$MASTER_ADDR \
     --env MASTER_PORT=$MASTER_PORT \
     --env NCCL_ALGO=$NCCL_ALGO \
@@ -225,7 +221,6 @@ APPTAINER="singularity exec --nv \
 echo "Generating cluster arguments..."
 
 CLUSTER_ARGS=$(singularity exec \
-    --env TITAN_USER=$TITAN_USER \
     --env TORCHINDUCTOR_CACHE_DIR=/tmp/torch_cache \
     --env TORCH_HOME=/tmp/torch_home \
     --bind $PROJECT_DIR:/opt/titan-oellm \
