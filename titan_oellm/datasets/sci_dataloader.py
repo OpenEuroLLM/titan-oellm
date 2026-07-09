@@ -10,6 +10,7 @@ from torchtitan.config import JobConfig
 from titan_oellm.constants import IGNORE_INDEX
 from titan_oellm.datasets.dataloader.mmap_dataset import MMapDataset
 from titan_oellm.datasets.dataloader.deterministic_packed_dataset import DeterministicPackedDataset
+from titan_oellm.datasets.dataloader.bestfit_packed_dataset import BestFitPackedDataset
 from titan_oellm.datasets.dataloader.mmap_dataset_chunked import ChunkedMMapDataset
 from titan_oellm.datasets.sequencer.simple_concat import StreamingSequencer
 from titan_oellm.datasets.utils.collator import collate_function, collate_function_document_eval
@@ -135,7 +136,9 @@ def build_sci_dataloader(
             exclude_last_n = job_config.validation.split_samples
             if exclude_last_n > 0:
                 logger.info(f"Training dataloader: excluding last {exclude_last_n} samples for validation split")
-        elif dataloader_type == "ChunkedMMapDataset":
+        elif dataloader_type in ("ChunkedMMapDataset", "DeterministicPackedDataset", "BestFitPackedDataset"):
+            # All chunk-based dataloaders (raw + pre-packed) hold out the first
+            # N docs per chunk for the validation split.
             exclude_first_n_per_chunk = _compute_docs_per_chunk(job_config)
             if exclude_first_n_per_chunk > 0:
                 logger.info(
@@ -198,6 +201,23 @@ def build_sci_dataloader(
             infinite=True,
             seed=seed,
             exclude_first_n_per_chunk=exclude_first_n_per_chunk,
+        )
+    elif dataloader_type == "BestFitPackedDataset":
+        raw_gbs = job_config.training.global_batch_size
+        resolved_gbs = raw_gbs if raw_gbs > 0 else job_config.training.local_batch_size * dp_world_size
+        dataset = BestFitPackedDataset(
+            chunks_dir=chunks_dir,
+            dp_world_size=dp_world_size,
+            dp_rank=dp_rank,
+            global_batch_size=resolved_gbs,
+            seq_len=seq_len,
+            min_sequence_length=min_doc_len,
+            eos_id=eos_id,
+            infinite=True,
+            seed=seed,
+            exclude_first_n_per_chunk=exclude_first_n_per_chunk,
+            best_fit_buffer_size=job_config.data.best_fit_buffer_size,
+            cache_dir=job_config.data.bfp_cache_dir or None,
         )
     else:
         raise ValueError(f"Unknown dataloader: {dataloader_type}")
@@ -273,7 +293,7 @@ def build_sci_validation_dataloader(
             data_prefix = job_config.data.data_prefix  # Use training data path
             use_only_last_n = job_config.validation.split_samples
             logger.info(f"Validation dataloader (split mode): using last {use_only_last_n} samples from training data")
-        elif dataloader_type == "ChunkedMMapDataset":
+        elif dataloader_type in ("ChunkedMMapDataset", "BestFitPackedDataset"):
             chunks_dir = job_config.data.chunks_dir  # Use training chunks dir
             use_only_first_n_per_chunk = _compute_docs_per_chunk(job_config)
             logger.info(f"Validation dataloader (split mode): using first {use_only_first_n_per_chunk} docs per chunk")
@@ -307,6 +327,22 @@ def build_sci_validation_dataloader(
             seed=seed,
             use_only_first_n_per_chunk=use_only_first_n_per_chunk,
         )
+    elif dataloader_type == "BestFitPackedDataset":
+        resolved_gbs = batch_size * dp_world_size
+        dataset = BestFitPackedDataset(
+            chunks_dir=chunks_dir,
+            dp_world_size=dp_world_size,
+            dp_rank=dp_rank,
+            global_batch_size=resolved_gbs,
+            seq_len=seq_len,
+            min_sequence_length=min_doc_len,
+            eos_id=(tokenizer.eos_id if getattr(job_config.data, "eos_id", -1) == -1 else job_config.data.eos_id),
+            infinite=False,
+            seed=seed,
+            use_only_first_n_per_chunk=use_only_first_n_per_chunk,
+            best_fit_buffer_size=job_config.data.best_fit_buffer_size,
+            cache_dir=job_config.data.bfp_cache_dir or None,
+        )
     else:
         raise ValueError(f"Unknown validation dataloader: {dataloader_type}")
 
@@ -320,7 +356,24 @@ def build_sci_validation_dataloader(
 
     eval_mode = getattr(job_config.validation, "eval_mode", "concatenated")
 
-    if eval_mode == "document":
+    # Pre-packed datasets (BestFitPackedDataset) already emit packed sequences —
+    # bypass the sequencer and collate them directly, like the training path.
+    if dataloader_type == "BestFitPackedDataset":
+        if eval_mode == "document":
+            logger.warning(
+                "BestFitPackedDataset ignores eval_mode='document' — sequences are "
+                "pre-packed with multiple documents; using packed concatenated collate."
+            )
+        attn_config = _resolve_attention_config(
+            job_config, job_config.training.local_batch_size, seq_len, min_doc_len
+        )
+        # Validation disables flash attention for simplicity
+        attn_config["use_flash_attention"] = False
+        mask_eot_loss = getattr(job_config.data, "mask_eot_loss", False)
+        collate_fn = _make_collate_fn(dataloader_type, attn_config, eos_id, seq_len, ignore_index, mask_eot_loss)
+        wrapped_dataset = dataset
+
+    elif eval_mode == "document":
         # Document mode: evaluate each document independently (no sequencer).
         # Each sample = one document, truncated/padded to seq_len.
         # This ensures document-aware validation regardless of training masking:

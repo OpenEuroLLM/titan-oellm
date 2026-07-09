@@ -48,10 +48,21 @@ class SciData:
     """Directory(ies) containing data chunks for ChunkedMMapDataset / DeterministicPackedDataset"""
 
     dataloader: str = "MMapDataset"
-    """Type of dataloader to use: 'MMapDataset', 'DeterministicPackedDataset', or 'ChunkedMMapDataset'"""
+    """Type of dataloader to use: 'MMapDataset', 'DeterministicPackedDataset',
+       'BestFitPackedDataset', or 'ChunkedMMapDataset'"""
 
     seed: int = 42
     """Random seed for data loading"""
+
+    best_fit_buffer_size: int = 32
+    """Fragment buffer size (BST/FIFO) for BestFitPackedDataset best-fit packing.
+       Larger = tighter packing but slower plan build; >32 gives negligible gain
+       at much higher build cost. Only used when dataloader='BestFitPackedDataset'."""
+
+    bfp_cache_dir: str = ""
+    """Shared cache dir for BestFitPackedDataset packing-plan files. Empty →
+       <chunks_dir>/.packing_cache. Set to a writable shared path so a login-node
+       prebuild and the multi-node job reuse the same plan (read-only dataset dirs)."""
 
     mask_eot_loss: bool = False
     """If True, mask EOS/EOT tokens from the loss (like Megatron's eod_mask_loss)."""
