@@ -712,6 +712,13 @@ class EnhancedMetricsProcessor(MetricsProcessor):
         if perplexity is not None:
             combined_extra_metrics["loss_metrics/global/avg_ppl"] = perplexity
 
+        # Add packing/dataset statistics from the collator (real-token %,
+        # truncation rate, avg docs/seq, padding). Populated on every collate
+        # call for all packing dataloaders (BestFit / Deterministic / streaming).
+        from titan_oellm.datasets.utils.collator import _last_packing_stats
+        if _last_packing_stats:
+            combined_extra_metrics.update(_last_packing_stats)
+
         # Add rounding state if available (from weight normalizer)
         if hasattr(self, "optimizers") and self.optimizers:
             try:

@@ -27,6 +27,17 @@ dataloader = "MMapDataset"
 local_batch_size = 2
 seq_len = 512
 
+# Best-fit packing (chunk-based): combines document fragments to fill each
+# seq_len+1 window as tightly as possible — higher real-token utilization and
+# lower truncation than greedy concatenation. Reads chunk_*.bin/.idx from
+# chunks_dir and builds a cached packing plan on first use.
+# dataloader = "BestFitPackedDataset"
+# best_fit_buffer_size = 32          # packing buffer size (larger = tighter, slower build)
+# bfp_cache_dir = ""                 # shared plan-cache dir; empty → <chunks_dir>/.packing_cache
+# For multi-node runs, warm the plan cache once on the login node first:
+#   python -m titan_oellm.datasets.utils.prebuild_bfp --job.config_file=<this> \
+#       --data.dataloader=BestFitPackedDataset
+
 [training]
 steps = 100
 local_batch_size = 2
