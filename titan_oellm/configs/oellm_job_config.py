@@ -331,6 +331,27 @@ class LRScheduler(BaseLRScheduler):
     over exactly decay_steps = total_steps - start_step.
     """
 
+    # ── Ornstein-Uhlenbeck stochastic LR (scheduler_type="universal_ou") ──────
+    # Opt into the "universal_ou" scheduler: the three-phase universal curve plus
+    # a mean-reverting random walk of the LR during the main phase.
+    use_ou_process: bool = False
+    """Enable the OU mean-reverting random walk in the main phase (also enabled
+       implicitly when scheduler_type == "universal_ou")."""
+    ou_theta: float = 0.008
+    """OU mean-reversion strength (pull back toward the base LR)."""
+    ou_sigma: float = 0.1
+    """OU noise scale (per-step diffusion)."""
+    ou_max_change: float = 0.05
+    """Clamp on the per-step multiplicative LR change."""
+    ema_alpha: float = 0.99
+    """EMA smoothing of the OU factor."""
+    ou_seed: int = 1
+    """Seed for the OU process (checkpointed for reproducible resume)."""
+    ou_decay_type: str = "const"
+    """Underlying decay applied around the OU fluctuation in the main phase."""
+    ou_min_ratio: float = 0.2
+    """Target LR ratio for the OU underlying decay."""
+
 
 @dataclass
 class Checkpoint(BaseCheckpoint):
@@ -431,6 +452,9 @@ class Model(BaseModel):
     """Enable Mixture of Experts (Qwen3 MoE variants)"""
     moe_inter_dim: int = 768
     """MoE intermediate dimension (Qwen3 MoE variants)"""
+    fp8_activations: bool = False
+    """Store attention/FFN pre-projection activations in FP8 E4M3 on the backward
+       tape (halves activation memory; STE backward). Training-time only, pure torch."""
 
 
 @dataclass
@@ -558,6 +582,183 @@ def apply_output_dir_prefix(job_config: "JobConfig") -> None:
         logger.warning("Failed to apply OUTPUT_DIR prefix: %s", exc)
 
 @dataclass
+class ConstrainedAdamOptimizer:
+    """ConstrainedAdam (CPR, Franke et al. arXiv:2311.09058) configuration.
+
+    Selected via [optimizer].name = "constrained_adam". Two modes:
+    - "bounded"    : each weight row constrained to ‖w_i‖ ≤ max_norm (CPR upper
+                     bound). Safe on standard qwen3 — a regularizer, not a
+                     reparametrization. **Default here.**
+    - "normalized" : each weight row forced to unit norm ‖w_i‖ = 1 (unit sphere,
+                     for hyperspherical/nGPT-style models).
+    """
+
+    mode: str = "bounded"
+    """Constraint mode: "bounded" (CPR, default) or "normalized" (unit sphere)."""
+
+    betas: list[float] = field(default_factory=lambda: [0.9, 0.999])
+    eps: float = 1e-8
+    weight_decay: float = 0.0
+    max_norm: float = 1.0
+    """Upper bound on each weight row's L2 norm (bounded mode)."""
+    delta: float = 0.0
+    """Only project rows within delta of the boundary (bounded mode)."""
+    project_momentum: bool = True
+    parallel_transport: bool = True
+    fallback_lr: float | None = None
+    """LR for scalar (1D) params. None → optimizer.lr."""
+    embedding_lr: float | None = None
+    """LR for embedding params. None → fallback_lr."""
+    embedding_norm: bool = False
+    """Apply GPTNormalizer to embeddings post-step. Default False for qwen3
+       (nGPT-style embedding normalization is off unless you want it)."""
+    head_lr_mult: float = 1.0
+    embed_lr_mult: float = 1.0
+    scaler_weight_decay: float = 0.0
+
+
+@dataclass
+class AdamCPROptimizer:
+    """AdamCPR — reference Constrained Parameter Regularization (arXiv:2311.09058,
+    github.com/automl/CPR). Selected via [optimizer].name = "adam_cpr".
+
+    Replaces weight decay with a hard per-parameter constraint on a regularization
+    statistic (default: squared L2 norm), enforced by an augmented-Lagrangian
+    update. The bound κ is set automatically by default (inflection_point).
+    """
+
+    betas: list[float] = field(default_factory=lambda: [0.9, 0.999])
+    eps: float = 1e-8
+    kappa_init_method: str = "inflection_point"
+    """κ init: "inflection_point" (auto), "warm_start", "dependent", "uniform"."""
+    kappa_init_param: float = 1000.0
+    """Meaning depends on kappa_init_method: warmup steps (warm_start) /
+       scale factor (dependent) / fixed bound (uniform)."""
+    reg_function: str = "l2"
+    """Regularization statistic: "l2", "l1", "std", or "huber"."""
+    kappa_update: float = 1.0
+    """Lagrange-multiplier step size μ."""
+    reg_step_size: int = 200
+    """Sampling cadence for inflection-point detection."""
+    reg_ema_decay: float = 0.99
+    """EMA decay for the statistic in inflection-point mode."""
+    reg_embedding: bool = False
+    """Also regularize embedding weights (default: exclude)."""
+    reg_by_lr: bool = False
+    """Scale the constraint pullback by the current lr."""
+    amsgrad: bool = False
+
+
+@dataclass
+class BoundedSphericalAdamOptimizer:
+    """BoundedSphericalAdam (BSA) configuration.
+
+    Selected via [optimizer].name = "bounded_spherical_adam". Tangent-projected
+    Adam with a predictive constraint on each weight row. Modes:
+    - "bounded"                    : ‖w_row‖ ≤ max_norm (ball with boundary).
+    - "normalized"                 : ‖w_row‖ = 1 (unit sphere).
+    - "partial_orthogonal"         : Newton-Schulz row-decorrelation.
+    - "partial_orthogonal_bounded" : decorrelation + norm bound.
+    Default "bounded" (CPR-like, safe on standard qwen3).
+    """
+
+    mode: str = "bounded"
+    betas: list[float] = field(default_factory=lambda: [0.9, 0.95])
+    eps: float = 1e-8
+    weight_decay: float = 0.0
+    max_norm: float = 1.0
+    project_gradients: bool = True
+    correct_v: bool = False
+    soft_blend: bool = False
+    rotation_lr: float | None = None
+    fallback_lr: float | None = None
+    embedding_lr: float | None = None
+    n_iter_spectral: int = 3
+    n_iter_ns: int = 5
+    n_iter: float = 1.0
+    ffn_down_left_ns: bool = False
+    ns_alpha: float = 1.0
+    ns_mode: str = "full"
+    kappa_target: float = 4.0
+    lambda_max: float = 0.05
+    kappa_ema_beta: float = 0.99
+    ns_schedule_steps: int = 4000
+    out_norm_dim_0: bool = False
+
+
+@dataclass
+class SharedBoundMuonOptimizer:
+    """SharedBoundMuon config (base container for BoundedMuon).
+
+    BSA gradient projection + optional Muon NS on the gradient direction. Used as
+    the parent of BoundedMuon; selectable directly via
+    [optimizer].name = "shared_bound_muon".
+    """
+
+    mode: str = "bounded"
+    betas: list[float] = field(default_factory=lambda: [0.9, 0.95])
+    eps: float = 1e-8
+    weight_decay: float = 0.0
+    max_norm: float = 1.0
+    project_gradients: bool = True
+    soft_blend: bool = False
+    rotation_lr: float | None = None
+    fallback_lr: float | None = None
+    embedding_lr: float | None = None
+    n_iter_spectral: int = 3
+    n_iter_ns: int = 5
+    n_iter: float = 1.0
+    ffn_down_left_ns: bool = False
+    ns_alpha: float = 1.0
+    ns_mode: str = "full"
+    kappa_target: float = 4.0
+    lambda_max: float = 0.05
+    kappa_ema_beta: float = 0.99
+    ns_schedule_steps: int = 4000
+    out_norm_dim_0: bool = False
+    muon_on_gradient: bool = False
+    muon_ns_steps: int = 5
+    muon_ns_mode: str = "muon"
+    muon_preserve_norm: bool = True
+    muon_ns_dtype: str = "bfloat16"
+
+
+@dataclass
+class BoundedMuonOptimizer:
+    """BoundedMuon config — canonical "true Muon" (Newton-Schulz on the momentum
+    buffer, pure SGD update) + BSA row-norm projection.
+
+    Selected via [optimizer].name = "bounded_muon" (or "muon"). Works on standard
+    transformers; the post-step row-norm constraint is aggressive on unnormalized
+    weights — sweep max_norm carefully.
+    """
+
+    betas: list[float] = field(default_factory=lambda: [0.9, 0.95])
+    eps: float = 1e-8
+    weight_decay: float = 0.0
+    max_norm: float = 1.0
+    project_gradients: bool = True
+    soft_blend: bool = False
+    out_norm_dim_0: bool = False
+    rotation_lr: float | None = None
+    fallback_lr: float | None = None
+    embedding_lr: float | None = None
+    muon_beta1: float = 0.95
+    muon_nesterov: bool = True
+    muon_ns_steps: int = 5
+    muon_ns_mode: str = "muon"
+    """NS coeff mode: "muon", "polar_express", "gram_polar_express", "convergent",
+       "cubic", or a "dist_*" FSDP2 distributed-NS mode."""
+    muon_scale: float = 0.2
+    muon_norm_preserve: bool = False
+    muon_bias_correction: bool = False
+    muon_geodesic: bool = False
+    muon_adam_scale: bool = False
+    muon_flat_scale: bool = False
+    reprojection_interval: int = 1
+
+
+@dataclass
 class JobConfig(BaseJobConfig):
     """Extended JobConfig with SciData, SciTokenizer, Normalizer, ParameterLogging, and custom Validation.
 
@@ -581,6 +782,15 @@ class JobConfig(BaseJobConfig):
     sci_tokenizer: SciTokenizer = field(default_factory=SciTokenizer)
     parameter_logging: ParameterLogging = field(default_factory=ParameterLogging)
     benchmarks: Benchmarks = field(default_factory=Benchmarks)
+
+    # Custom optimizer sections (active one chosen by [optimizer].name).
+    # These hold the extra hyperparameters; the base [optimizer] section still
+    # provides name/lr/betas/weight_decay.
+    constrained_adam: ConstrainedAdamOptimizer = field(default_factory=ConstrainedAdamOptimizer)
+    adam_cpr: AdamCPROptimizer = field(default_factory=AdamCPROptimizer)
+    bounded_spherical_adam: BoundedSphericalAdamOptimizer = field(default_factory=BoundedSphericalAdamOptimizer)
+    shared_bound_muon: SharedBoundMuonOptimizer = field(default_factory=SharedBoundMuonOptimizer)
+    bounded_muon: BoundedMuonOptimizer = field(default_factory=BoundedMuonOptimizer)
 
     def __post_init__(self) -> None:
         apply_output_dir_prefix(self)

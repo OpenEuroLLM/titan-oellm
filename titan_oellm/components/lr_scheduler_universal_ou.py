@@ -1,22 +1,23 @@
-# Copyright (c) Titan-OELLM Custom Components.
+# Copyright (c) Titan-Sci Custom Components.
 # All rights reserved.
 #
-# Universal Learning Rate Scheduler for TorchTitan
+# Universal OU Stochastic Learning Rate Scheduler for TorchTitan
 
 """
-Universal Learning Rate Scheduler - Unified Scheduler
+Universal OU Stochastic Learning Rate Scheduler - Unified Scheduler
 
 This module implements a universal learning rate scheduler that replaces all other
-LR schedulers through a flexible three-phase architecture with optional process.
+LR schedulers through a flexible three-phase architecture with optional OU stochastic process.
 
 The scheduler has three configurable phases:
 1. Phase 1 (Warm): Optional warm-up or warm-down with bidirectional control
-2. Phase 2 (Main): Base schedule with optional process
+2. Phase 2 (Main): Base schedule with optional OU stochastic process
 3. Phase 3 (Cooldown): Final annealing to minimum LR
 
 Key features:
 - Unified Parameter System: Consistent naming across all phases
 - Bidirectional Warm Phase: warm_direction="up" (warmup) or "down" (warmdown)
+- Optional OU Process: Controlled by use_ou_process flag
 - Flexible Duration: Absolute steps or ratio of total steps
 - Universal Decay Curves: All phases support linear, cosine, exp, sqrt
 - State Persistence: Full support for checkpointing and resuming
@@ -30,8 +31,10 @@ Phase 1 - Warm:
   - warm_start_ratio: Starting LR multiplier (for warmdown)
 
 Phase 2 - Main:
+  - use_ou_process: Enable/disable OU stochastic process
   - main_decay_type: "const", "linear", "cosine", "exp", "sqrt"
   - main_decay_ratio: Target LR ratio at end of main phase
+  - OU params: ou_theta, ou_sigma, ou_max_change, ema_alpha, ou_seed
 
 Phase 3 - Cooldown:
   - cooldown_steps/cooldown_ratio: Duration (mutually exclusive)
@@ -42,9 +45,9 @@ Global:
 
 Example usage:
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.001)
-    scheduler = build_lr_schedulers_universal(
+    scheduler = build_lr_schedulers_universal_ou(
         optimizers_container,
-        job_config  # Config with universal parameters in lr_scheduler section
+        job_config  # Config with universal_ou parameters in lr_scheduler section
     )
 """
 
@@ -58,24 +61,25 @@ from torchtitan.components.optimizer import OptimizersContainer
 from torchtitan.config import LRScheduler as LRSchedulerConfig
 from torchtitan.tools.logging import logger
 
-# Import the base universal scheduler implementation
-from titan_oellm.components.universal_lr import UniversalLR
+# Import the base universal OU scheduler implementation
+from titan_oellm.components.universal_ou_stochastic_lr import UniversalOUStochasticLR
 
 __all__ = [
-    "UniversalLRSchedulersContainer",
-    "build_lr_schedulers_universal",
+    "UniversalOULRSchedulersContainer",
+    "build_lr_schedulers_universal_ou",
     "build_lr_schedulers_auto",  # Factory function for backward compatibility
 ]
 
 
-class UniversalLRSchedulersContainer(Stateful):
-    """Container for multiple Universal learning rate schedulers.
+class UniversalOULRSchedulersContainer(Stateful):
+    """Container for multiple Universal OU stochastic learning rate schedulers.
 
-    This container wraps multiple UniversalLR schedulers and provides a unified
+    This container wraps multiple UniversalOUStochasticLR schedulers and provides a unified
     interface compatible with TorchTitan's training loop.
 
     Key Features:
-    - Uses UniversalLR for maximum flexibility
+    - Uses UniversalOUStochasticLR for maximum flexibility
+    - Preserves stochastic state (OU process, EMA state) across checkpoints
     - Each scheduler maintains independent stochastic trajectories
     - Supports all scheduler types through unified parameter system
 
@@ -98,7 +102,7 @@ class UniversalLRSchedulersContainer(Stateful):
     ) -> None:
         assert len(optimizers) > 0, "Must have at least one optimizer to create LRScheduler"
 
-        # Get universal parameters with defaults
+        # Get universal_ou parameters with defaults
 
         # Phase 1 - Warm
         warm_steps = getattr(lr_scheduler_config, 'warm_steps', 0)
@@ -108,8 +112,16 @@ class UniversalLRSchedulersContainer(Stateful):
         warm_start_ratio = getattr(lr_scheduler_config, 'warm_start_ratio', 2.0)
 
         # Phase 2 - Main
+        use_ou_process = getattr(lr_scheduler_config, 'use_ou_process', False)
         main_decay_type = getattr(lr_scheduler_config, 'main_decay_type', 'const')
         main_decay_ratio = getattr(lr_scheduler_config, 'main_decay_ratio', 0.2)
+
+        # OU parameters
+        ou_theta = getattr(lr_scheduler_config, 'ou_theta', 0.008)
+        ou_sigma = getattr(lr_scheduler_config, 'ou_sigma', 0.1)
+        ou_max_change = getattr(lr_scheduler_config, 'ou_max_change', 0.05)
+        ema_alpha = getattr(lr_scheduler_config, 'ema_alpha', 0.99)
+        ou_seed = getattr(lr_scheduler_config, 'ou_seed', 1)
 
         # Phase 3 - Cooldown
         cooldown_steps = getattr(lr_scheduler_config, 'cooldown_steps', 0)
@@ -149,21 +161,26 @@ class UniversalLRSchedulersContainer(Stateful):
             cooldown_desc += f", type={cooldown_type}"
 
         main_desc = f"{actual_main_steps} steps, decay_type={main_decay_type}, target_ratio={main_decay_ratio}"
+        if use_ou_process:
+            main_desc += f" (OU enabled: theta={ou_theta}, sigma={ou_sigma}, max_change={ou_max_change}, ema={ema_alpha})"
+        else:
+            main_desc += " (OU disabled)"
 
         logger.info(
-            f"Creating Universal LR Scheduler:\n"
+            f"Creating Universal OU Stochastic LR Scheduler:\n"
             f"  Total steps: {training_steps}\n"
             f"  Phase distribution: {actual_warm_steps} warm → {actual_main_steps} main → {actual_cooldown_steps} cooldown\n"
             f"  Phase 1 Warm: {warm_desc}\n"
             f"  Phase 2 Main: {main_desc}\n"
             f"  Phase 3 Cooldown: {cooldown_desc}\n"
             f"  Min LR absolute: {lr_min_absolute:.2e}\n"
+            f"  OU seed (reproducibility): {ou_seed}"
         )
 
-        # Create universal schedulers for each optimizer
-        self.schedulers: List[UniversalLR] = []
+        # Create universal OU schedulers for each optimizer
+        self.schedulers: List[UniversalOUStochasticLR] = []
         for i, optimizer in enumerate(optimizers):
-            scheduler = UniversalLR(
+            scheduler = UniversalOUStochasticLR(
                 optimizer=optimizer,
                 total_steps=training_steps,
                 # Phase 1
@@ -173,8 +190,14 @@ class UniversalLRSchedulersContainer(Stateful):
                 warm_type=warm_type,
                 warm_start_ratio=warm_start_ratio,
                 # Phase 2
+                use_ou_process=use_ou_process,
                 main_decay_type=main_decay_type,
                 main_decay_ratio=main_decay_ratio,
+                ou_theta=ou_theta,
+                ou_sigma=ou_sigma,
+                ou_max_change=ou_max_change,
+                ema_alpha=ema_alpha,
+                seed=ou_seed,
                 # Phase 3
                 cooldown_steps=cooldown_steps,
                 cooldown_ratio=cooldown_ratio,
@@ -182,6 +205,7 @@ class UniversalLRSchedulersContainer(Stateful):
                 # Global
                 lr_min_absolute=lr_min_absolute,
                 last_epoch=-1,
+                verbose=False  # We handle logging at container level
             )
             self.schedulers.append(scheduler)
 
@@ -209,14 +233,15 @@ class UniversalLRSchedulersContainer(Stateful):
                     f"(Phase: {phase})"
                 )
 
-    def _get_current_phase(self, scheduler: UniversalLR) -> str:
+    def _get_current_phase(self, scheduler: UniversalOUStochasticLR) -> str:
         """Determine current phase of the scheduler."""
         current_step = scheduler.last_epoch
 
         if current_step < scheduler.warm_steps:
             return f"warm ({scheduler.warm_direction})"
         elif current_step < scheduler.warm_steps + scheduler.main_steps:
-            return f"main"
+            ou_status = "with OU" if scheduler.use_ou_process else "no OU"
+            return f"main ({ou_status})"
         else:
             return "cooldown"
 
@@ -243,6 +268,8 @@ class UniversalLRSchedulersContainer(Stateful):
 
         Restores the exact stochastic state of each scheduler, including:
         - Current step (last_epoch)
+        - OU process state (ou_factors)
+        - EMA state (ema_ou_factors)
         - Per-parameter-group states
         """
         num_schedulers = state_dict.get('num_schedulers', 1)
@@ -261,21 +288,56 @@ class UniversalLRSchedulersContainer(Stateful):
                 scheduler_state = copy.deepcopy(scheduler_states[i])
                 # Remove our added metadata before loading
                 scheduler_state.pop('scheduler_index', None)
+
+                # Save the config-specified total_steps BEFORE load overwrites them
+                config_total_steps = scheduler.total_steps
+                config_main_steps = scheduler.main_steps
+                config_warm_steps = scheduler.warm_steps
+                config_cooldown_steps = scheduler.cooldown_steps
+                saved_total_steps = scheduler_state.get('total_steps', config_total_steps)
+
                 scheduler.load_state_dict(scheduler_state)
-                logger.info(f"Loaded state for Universal scheduler {i} at step {scheduler.last_epoch}")
+
+                # If total_steps changed (user set new training.steps), use the
+                # NEW config values so the LR schedule covers the extended training.
+                # DCP restores the checkpoint's total_steps, but the user explicitly
+                # requested a different duration — honor that.
+                if saved_total_steps != config_total_steps:
+                    old_lr = scheduler.get_last_lr()[0] if hasattr(scheduler, '_last_lr') and scheduler._last_lr else None
+                    scheduler.total_steps = config_total_steps
+                    scheduler.warm_steps = config_warm_steps
+                    scheduler.cooldown_steps = config_cooldown_steps
+                    scheduler.main_steps = config_main_steps
+                    new_lr = scheduler._compute_main_base_lr(
+                        scheduler.base_lrs[0],
+                        max(0, scheduler.last_epoch - scheduler.warm_steps)
+                    ) if scheduler.main_decay_type != "const" else scheduler.base_lrs[0]
+                    logger.warning(
+                        f"LR scheduler total_steps changed: checkpoint={saved_total_steps} → "
+                        f"config={config_total_steps} (main_steps: {saved_total_steps - config_warm_steps - config_cooldown_steps} → "
+                        f"{config_main_steps}). Using new schedule. "
+                        f"LR at resume step {scheduler.last_epoch}: {old_lr} → ~{new_lr:.6f}. "
+                        f"If this causes a loss spike, consider using main_decay_type=const "
+                        f"or keeping training.steps unchanged."
+                    )
+
+                logger.info(
+                    f"Loaded state for Universal OU scheduler {i} at step {scheduler.last_epoch} "
+                    f"(total_steps={scheduler.total_steps}, main_steps={scheduler.main_steps})"
+                )
             else:
-                logger.warning(f"No checkpoint state available for Universal scheduler {i}")
+                logger.warning(f"No checkpoint state available for Universal OU scheduler {i}")
 
 
-def build_lr_schedulers_universal(
+def build_lr_schedulers_universal_ou(
     optimizers: OptimizersContainer,
     lr_scheduler_config: LRSchedulerConfig,
     training_steps: int,
-) -> UniversalLRSchedulersContainer:
-    """Create a UniversalLRSchedulersContainer with universal schedulers.
+) -> UniversalOULRSchedulersContainer:
+    """Create a UniversalOULRSchedulersContainer with universal OU schedulers.
 
-    This function creates a container of universal learning rate schedulers
-    for the given optimizers. The universal scheduler can emulate all other
+    This function creates a container of universal OU learning rate schedulers
+    for the given optimizers. The universal OU scheduler can emulate all other
     schedulers through its flexible three-phase architecture.
 
     Configuration Parameters (in job_config.lr_scheduler):
@@ -288,8 +350,14 @@ def build_lr_schedulers_universal(
     - warm_start_ratio: Starting LR multiplier for warmdown (default: 2.0)
 
     Phase 2 - Main:
+    - use_ou_process: Enable OU stochastic process (default: False)
     - main_decay_type: "const", "linear", "cosine", "exp", "sqrt" (default: "const")
     - main_decay_ratio: Target LR ratio at end of main phase (default: 0.2)
+    - ou_theta: OU mean reversion rate (default: 0.008)
+    - ou_sigma: OU noise amplitude (default: 0.1)
+    - ou_max_change: Max OU factor change per step (default: 0.05)
+    - ema_alpha: EMA smoothing factor (default: 0.99)
+    - ou_seed: Random seed for reproducibility (default: 1)
 
     Phase 3 - Cooldown:
     - cooldown_steps: Absolute number of cooldown steps (default: 0, mutually exclusive with cooldown_ratio)
@@ -301,35 +369,38 @@ def build_lr_schedulers_universal(
 
     Phase Behavior Examples:
 
-    Example 1:
+    Example 1 - Replace old OU with warmdown:
         [lr_scheduler]
-        scheduler_type = "universal"
+        scheduler_type = "universal_ou"
         warm_steps = 0
         warm_ratio = 0.2  # 20% warmdown
         warm_direction = "down"
         warm_type = "sqrt"
         warm_start_ratio = 2.0
+        use_ou_process = true
         main_decay_type = "cosine"
         main_decay_ratio = 0.2
         cooldown_steps = 2000
         cooldown_type = "cosine"
 
-    Example 2 - Pure cosine annealing:
+    Example 2 - Pure cosine annealing (no OU):
         [lr_scheduler]
-        scheduler_type = "universal"
+        scheduler_type = "universal_ou"
         warm_steps = 200
         warm_direction = "up"
         warm_type = "linear"
+        use_ou_process = false
         main_decay_type = "cosine"
         main_decay_ratio = 0.0
         cooldown_steps = 0
 
     Example 3 - Warmup-Stable-Decay:
         [lr_scheduler]
-        scheduler_type = "universal"
+        scheduler_type = "universal_ou"
         warm_ratio = 0.1
         warm_direction = "up"
         warm_type = "linear"
+        use_ou_process = false
         main_decay_type = "const"
         cooldown_ratio = 0.1
         cooldown_type = "cosine"
@@ -340,23 +411,24 @@ def build_lr_schedulers_universal(
         training_steps (int): The total number of training steps.
 
     Returns:
-        UniversalLRSchedulersContainer: Container with configured universal LR schedulers.
+        UniversalOULRSchedulersContainer: Container with configured universal OU LR schedulers.
     """
-    return UniversalLRSchedulersContainer(optimizers, lr_scheduler_config, training_steps)
+    return UniversalOULRSchedulersContainer(optimizers, lr_scheduler_config, training_steps)
 
 
 def build_lr_schedulers_auto(
     optimizers: OptimizersContainer,
     lr_scheduler_config: LRSchedulerConfig,
     training_steps: int,
-) -> UniversalLRSchedulersContainer:
+) -> UniversalOULRSchedulersContainer:
     """
     Factory function for building learning rate schedulers.
 
     This function provides backward compatibility with the old lr_scheduler_factory.
-    All scheduler types have been unified into the universal scheduler.
+    All scheduler types have been unified into the universal_ou scheduler.
 
-    The universal scheduler can emulate all of them through its flexible
+    The old scheduler types (wsd, wdd, cosine, ou, doud) have been deprecated.
+    The universal_ou scheduler can emulate all of them through its flexible
     three-phase architecture.
 
     Args:
@@ -365,38 +437,25 @@ def build_lr_schedulers_auto(
         training_steps (int): The total number of training steps.
 
     Returns:
-        UniversalLRSchedulersContainer: Container with configured universal LR schedulers.
+        UniversalOULRSchedulersContainer: Container with configured universal OU LR schedulers.
 
     Notes:
-        - If scheduler_type is not "universal", a warning will be logged
-        - The universal scheduler supports all functionality of previous schedulers
-        - See build_lr_schedulers_universal documentation for configuration examples
+        - If scheduler_type is not "universal_ou", a warning will be logged
+        - The universal_ou scheduler supports all functionality of previous schedulers
+        - See build_lr_schedulers_universal_ou documentation for configuration examples
     """
     # Get scheduler type from config
-    scheduler_type = getattr(lr_scheduler_config, 'scheduler_type', 'universal')
+    scheduler_type = getattr(lr_scheduler_config, 'scheduler_type', 'universal_ou')
 
-    # Ornstein-Uhlenbeck stochastic LR: a superset of the universal scheduler that
-    # adds a mean-reverting random walk in the main phase. Opt in via
-    # scheduler_type="universal_ou" or use_ou_process=True.
-    use_ou = scheduler_type == "universal_ou" or getattr(lr_scheduler_config, "use_ou_process", False)
-    if use_ou:
-        from titan_oellm.components.lr_scheduler_universal_ou import (
-            build_lr_schedulers_universal_ou,
-        )
-        logger.info("Using Universal-OU LR Scheduler (three-phase + Ornstein-Uhlenbeck main phase)")
-        effective_steps = getattr(lr_scheduler_config, 'lr_steps', None) or training_steps
-        return build_lr_schedulers_universal_ou(optimizers, lr_scheduler_config, effective_steps)
-
-    if scheduler_type not in ("universal", "universal_ou"):
+    if scheduler_type != "universal_ou":
         logger.warning(
             f"scheduler_type='{scheduler_type}' is no longer supported. "
-            f"All scheduler types have been unified into 'universal'. "
-            f"Using universal scheduler instead.\n"
-            f"Please update your config to use scheduler_type='universal' and configure "
+            f"All scheduler types have been unified into 'universal_ou'. "
+            f"Using universal_ou scheduler instead.\n"
+            f"Please update your config to use scheduler_type='universal_ou' and configure "
             f"the three-phase architecture (warm/main/cooldown) to achieve the desired behavior.\n"
             f"See documentation for examples of how to emulate old scheduler types."
         )
 
-    logger.info("Using Universal LR Scheduler (unified scheduler for all use cases)")
-    effective_steps = getattr(lr_scheduler_config, 'lr_steps', None) or training_steps
-    return build_lr_schedulers_universal(optimizers, lr_scheduler_config, effective_steps)
+    logger.info("Using Universal OU LR Scheduler (unified scheduler for all use cases)")
+    return build_lr_schedulers_universal_ou(optimizers, lr_scheduler_config, training_steps)

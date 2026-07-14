@@ -357,13 +357,52 @@ def get_train_spec() -> TrainSpec:
     - Parameter logging with TensorBoard
     - HuggingFace checkpoint loading via state_dict_adapter
     """
+    def build_optimizers_fn(model_parts, optimizer_config, parallel_dims, ft_manager):
+        """Dispatch the optimizer by [optimizer].name.
+
+        adam_cpr → reference AdamCPR / CPR (github.com/automl/CPR, arXiv:2311.09058)
+        constrained_adam → CPR-style bounded/normalized Adam (arXiv:2311.09058)
+        bounded_spherical_adam → BSA (bounded/normalized/partial-orthogonal Adam)
+        bounded_muon / muon → true Muon (NS on momentum) + BSA row-norm projection
+        shared_bound_muon → BSA + Muon gradient-direction orthogonalization
+        anything else → torchtitan default (AdamW).
+        """
+        name = optimizer_config.name.lower()
+        if name == "adam_cpr":
+            from titan_oellm.optimizer import make_build_adam_cpr_optimizers
+            build_fn = make_build_adam_cpr_optimizers()
+            return build_fn(model_parts, optimizer_config, parallel_dims, ft_manager)
+        elif name == "constrained_adam":
+            from titan_oellm.optimizer import (
+                make_build_constrained_adam_optimizers,
+                _constrained_adam_config,
+            )
+            enable_embedding_norm = _constrained_adam_config.get("embedding_norm", False)
+            build_fn = make_build_constrained_adam_optimizers(
+                enable_embedding_norm=enable_embedding_norm
+            )
+            return build_fn(model_parts, optimizer_config, parallel_dims, ft_manager)
+        elif name == "bounded_spherical_adam":
+            from titan_oellm.optimizer import make_build_bounded_spherical_adam_optimizers
+            build_fn = make_build_bounded_spherical_adam_optimizers()
+            return build_fn(model_parts, optimizer_config, parallel_dims, ft_manager)
+        elif name in ("bounded_muon", "muon"):
+            from titan_oellm.optimizer import make_build_bounded_muon_optimizers
+            build_fn = make_build_bounded_muon_optimizers()
+            return build_fn(model_parts, optimizer_config, parallel_dims, ft_manager)
+        elif name == "shared_bound_muon":
+            from titan_oellm.optimizer import make_build_shared_bound_muon_optimizers
+            build_fn = make_build_shared_bound_muon_optimizers()
+            return build_fn(model_parts, optimizer_config, parallel_dims, ft_manager)
+        return build_optimizers(model_parts, optimizer_config, parallel_dims, ft_manager)
+
     return TrainSpec(
         model_cls=Qwen3Model,
         model_args=qwen3_custom_configs,
         parallelize_fn=parallelize_qwen3_custom,
         pipelining_fn=None,
-        build_optimizers_fn=build_optimizers,  # Standard optimizer (AdamW)
-        build_lr_schedulers_fn=build_lr_schedulers_auto,  # Universal LR scheduler
+        build_optimizers_fn=build_optimizers_fn,  # AdamW / constrained_adam / bounded_muon by config
+        build_lr_schedulers_fn=build_lr_schedulers_auto,  # Universal / Universal-OU LR scheduler
         build_dataloader_fn=build_sci_dataloader,  # Sci dataloader with MMap support
         build_tokenizer_fn=build_sci_hf_tokenizer,  # HF tokenizer with BOS/EOS control
         build_loss_fn=build_cross_entropy_loss,  # Standard cross-entropy loss

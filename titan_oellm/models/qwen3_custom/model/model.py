@@ -27,6 +27,8 @@ from torchtitan.models.moe import MoE
 from torchtitan.protocols.model import AttentionMasksType
 from torchtitan.protocols.train_spec import ModelProtocol
 
+from titan_oellm.components.fp8_ops import fp8_store
+
 from .args import Qwen3CustomModelArgs
 
 
@@ -236,6 +238,9 @@ class Attention(nn.Module):
             model_args.n_heads * self.head_dim, model_args.dim, bias=model_args.qkv_bias,
         )
 
+        # FP8 activation storage on the pre-wo activation (training-time only).
+        self.fp8_activations = getattr(model_args, "fp8_activations", False)
+
         match self.attn_type:
             case "flex":
                 self.inner_attention = FlexAttentionWrapper()
@@ -338,6 +343,9 @@ class Attention(nn.Module):
         ).contiguous()  # (bs, seqlen, n_local_heads, head_dim)
 
         output = output.view(bs, seqlen, -1)
+        # Store the pre-wo activation in FP8 (STE backward) to halve its memory
+        # footprint on the autograd tape. No-op unless enabled + training.
+        output = fp8_store(output, self.fp8_activations and self.training)
         return self.wo(output)
 
 
@@ -364,15 +372,20 @@ class FeedForward(nn.Module):
         dim: int,
         hidden_dim: int,
         bias: bool = False,
+        fp8_activations: bool = False,
     ):
         super().__init__()
 
         self.w1 = nn.Linear(dim, hidden_dim, bias=False)  # gate projection
         self.w3 = nn.Linear(dim, hidden_dim, bias=False)  # up projection
         self.w2 = nn.Linear(hidden_dim, dim, bias=False)   # down projection
+        # FP8 activation storage on the pre-w2 (SwiGLU) activation, training only.
+        self.fp8_activations = fp8_activations
 
     def forward(self, x):
-        return self.w2(F.silu(self.w1(x)) * self.w3(x))
+        hidden = F.silu(self.w1(x)) * self.w3(x)
+        hidden = fp8_store(hidden, self.fp8_activations and self.training)
+        return self.w2(hidden)
 
     def init_weights(self, init_std: float):
         # w1 (up/key) and w3 (gate) are input-side projections: use base std.
@@ -418,7 +431,8 @@ class TransformerBlock(nn.Module):
             )
         else:
             self.feed_forward = FeedForward(
-                dim=model_args.dim, hidden_dim=model_args.hidden_dim, bias=model_args.mlp_bias
+                dim=model_args.dim, hidden_dim=model_args.hidden_dim, bias=model_args.mlp_bias,
+                fp8_activations=getattr(model_args, "fp8_activations", False),
             )
         self.attention_norm = nn.RMSNorm(model_args.dim, eps=model_args.norm_eps)
         self.ffn_norm = nn.RMSNorm(model_args.dim, eps=model_args.norm_eps)

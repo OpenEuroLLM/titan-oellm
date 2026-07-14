@@ -18,6 +18,11 @@ name = "qwen3_custom"
 flavor = "debugmodel"
 # Override with your tokenizer path
 tokenizer_path = "/path/to/your/tokenizer/neox"
+# FP8 activation storage: quantize attn/FFN pre-projection activations to FP8 on
+# the backward tape (halves that activation's memory; STE backward). Pure torch.
+# fp8_activations = true
+# Separately, torchtitan's torchao FP8 Linear GEMMs (needs torchao installed):
+#   run with --model.converters=quantize.linear.float8  + a [quantize.linear.float8] block.
 
 [data]
 # Local dataset path (use small subset for testing)
@@ -47,10 +52,67 @@ mixed_precision_param = "bfloat16"
 name = "AdamW"
 lr = 2e-3
 
+# ── Custom optimizers (optional) ─────────────────────────────────────────────
+# Select by [optimizer].name; the extra hyperparameters live in their own
+# section. Uncomment one block.
+#
+# AdamCPR — reference Constrained Parameter Regularization (github.com/automl/CPR,
+# arXiv:2311.09058). Replaces weight decay with a hard L2-norm constraint whose
+# bound κ is found automatically (inflection_point). Set optimizer.weight_decay = 0.
+# [optimizer]
+# name = "adam_cpr"
+# lr = 2e-3
+# [adam_cpr]
+# kappa_init_method = "inflection_point"   # or "warm_start" (kappa_init_param = warmup steps)
+# kappa_init_param = 1000
+# reg_function = "l2"                        # "l2" | "l1" | "std" | "huber"
+#
+# ConstrainedAdam — CPR-style (titan-sci) weight-norm upper-bound regularizer:
+# [optimizer]
+# name = "constrained_adam"
+# lr = 2e-3
+# [constrained_adam]
+# mode = "bounded"        # "bounded" = CPR (‖w_row‖ ≤ max_norm); "normalized" = unit sphere
+# max_norm = 1.0
+# embedding_norm = false
+#
+# BoundedSphericalAdam (BSA) — tangent-projected Adam with a bounded/normalized/
+# partial-orthogonal weight constraint:
+# [optimizer]
+# name = "bounded_spherical_adam"
+# lr = 2e-3
+# [bounded_spherical_adam]
+# mode = "bounded"        # "bounded" | "normalized" | "partial_orthogonal" | "partial_orthogonal_bounded"
+# max_norm = 1.0
+#
+# Muon (true Muon: Newton-Schulz on the momentum) + row-norm projection:
+# [optimizer]
+# name = "bounded_muon"
+# lr = 2e-3
+# [bounded_muon]
+# max_norm = 1.0
+# muon_ns_mode = "muon"   # or "polar_express", "gram_polar_express", "dist_muon" (FSDP2)
+# muon_ns_steps = 5
+
 [lr_scheduler]
 scheduler_type = "cosine"
 warmup_steps = 0
 cooldown_steps = 0
+
+# ── Ornstein-Uhlenbeck stochastic LR (optional) ──────────────────────────────
+# Three-phase universal schedule + a mean-reverting random walk of the LR in the
+# main phase. Enable with scheduler_type = "universal_ou".
+# [lr_scheduler]
+# scheduler_type = "universal_ou"
+# warm_steps = 200
+# main_decay_type = "cosine"
+# main_decay_ratio = 0.2
+# cooldown_steps = 2000
+# use_ou_process = true
+# ou_theta = 0.008        # mean-reversion strength
+# ou_sigma = 0.1          # noise scale
+# ou_max_change = 0.05
+# ou_seed = 1
 
 [metrics]
 log_freq = 50
